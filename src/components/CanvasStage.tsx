@@ -2,10 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Pause,
   Play,
-  Redo2,
   RefreshCw,
   SlidersHorizontal,
-  Undo2,
   Waves,
 } from 'lucide-react';
 import { LavaRenderer, type TransientMotion } from '../engine/LavaRenderer';
@@ -18,10 +16,6 @@ interface CanvasStageProps {
   isPlaying: boolean;
   onTogglePlay: () => void;
   onStirFluid: () => void;
-  onUndo: () => void;
-  onRedo: () => void;
-  canUndo: boolean;
-  canRedo: boolean;
   onRandomizeLamp: () => void;
   onMobileBlobCountChange: (nextCount: number) => void;
   physicsRef: React.MutableRefObject<LavaPhysics>;
@@ -38,10 +32,6 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
   isPlaying,
   onTogglePlay,
   onStirFluid,
-  onUndo,
-  onRedo,
-  canUndo,
-  canRedo,
   onRandomizeLamp,
   onMobileBlobCountChange,
   physicsRef,
@@ -617,34 +607,6 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
             <Play className="w-4 h-4 md:w-3.5 md:h-3.5 shrink-0" aria-hidden="true" />
           )}
           {!isMobileLayout && <span>{isPlaying ? 'Pausar' : 'Reproduzir'}</span>}
-        </button>
-
-        <div className="w-px h-5 bg-black/[0.09] dark:bg-white/[0.08] mx-0.5 shrink-0" aria-hidden="true" />
-
-        <button
-          type="button"
-          onClick={onUndo}
-          disabled={!canUndo}
-          title="Desfazer (Ctrl+Z)"
-          aria-label="Desfazer"
-          className={`${
-            isMobileLayout ? 'h-11 w-11 rounded-xl' : 'h-9 w-9 rounded-lg'
-          } inline-flex items-center justify-center text-[#565666] dark:text-[#B6B6C4] md:hover:text-[#14141A] md:dark:hover:text-white md:hover:bg-black/[0.06] md:dark:hover:bg-white/[0.08] active:bg-black/[0.1] dark:active:bg-white/[0.14] active:scale-[0.94] disabled:opacity-30 disabled:pointer-events-none transition-all shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]`}
-        >
-          <Undo2 className="w-4 h-4 md:w-3.5 md:h-3.5" aria-hidden="true" />
-        </button>
-
-        <button
-          type="button"
-          onClick={onRedo}
-          disabled={!canRedo}
-          title="Refazer (Ctrl+Shift+Z)"
-          aria-label="Refazer"
-          className={`${
-            isMobileLayout ? 'h-11 w-11 rounded-xl' : 'h-9 w-9 rounded-lg'
-          } inline-flex items-center justify-center text-[#565666] dark:text-[#B6B6C4] md:hover:text-[#14141A] md:dark:hover:text-white md:hover:bg-black/[0.06] md:dark:hover:bg-white/[0.08] active:bg-black/[0.1] dark:active:bg-white/[0.14] active:scale-[0.94] disabled:opacity-30 disabled:pointer-events-none transition-all shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]`}
-        >
-          <Redo2 className="w-4 h-4 md:w-3.5 md:h-3.5" aria-hidden="true" />
         </button>
 
         <div className="w-px h-5 bg-black/[0.09] dark:bg-white/[0.08] mx-0.5 shrink-0" aria-hidden="true" />

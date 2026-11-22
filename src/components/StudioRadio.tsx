@@ -18,16 +18,54 @@ export const StudioRadio: React.FC = () => {
   const engineRef = useRef<StudioAudioEngine | null>(null);
 
   const [isOpen, setIsOpen] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(true);
   const [track, setTrack] = useState<StudioTrack>(STUDIO_TRACKS[0]);
   const [volume, setVolume] = useState(0.45);
   const [isMuted, setIsMuted] = useState(false);
   const lastVolumeRef = useRef(0.45);
+  const userPausedRef = useRef(false);
+  const volumeRef = useRef(0.45);
+  const isMutedRef = useRef(false);
+
+  volumeRef.current = volume;
+  isMutedRef.current = isMuted;
 
   useEffect(() => {
     const engine = new StudioAudioEngine();
     engineRef.current = engine;
+    let disposed = false;
+
+    const removeUnlockListeners = () => {
+      window.removeEventListener('pointerdown', handleFirstGesture, true);
+      window.removeEventListener('keydown', handleFirstGesture, true);
+    };
+
+    const handleFirstGesture = (e: Event) => {
+      if (disposed || userPausedRef.current) {
+        removeUnlockListeners();
+        return;
+      }
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('[data-radio-play-toggle]')) {
+        return;
+      }
+      removeUnlockListeners();
+      engine.setVolume(isMutedRef.current ? 0 : volumeRef.current);
+      void engine.play().catch(() => {});
+    };
+
+    engine.setVolume(volumeRef.current);
+    void engine.tryStart().then((started) => {
+      if (disposed || userPausedRef.current) return;
+      if (!started) {
+        window.addEventListener('pointerdown', handleFirstGesture, true);
+        window.addEventListener('keydown', handleFirstGesture, true);
+      }
+    });
+
     return () => {
+      disposed = true;
+      removeUnlockListeners();
       engine.dispose();
       engineRef.current = null;
     };
@@ -36,9 +74,16 @@ export const StudioRadio: React.FC = () => {
   const handleTogglePlay = async () => {
     const engine = engineRef.current;
     if (!engine) return;
-    engine.setVolume(isMuted ? 0 : volume);
-    const playing = await engine.togglePlay();
-    setIsPlaying(playing);
+    if (isPlaying) {
+      userPausedRef.current = true;
+      engine.pause();
+      setIsPlaying(false);
+    } else {
+      userPausedRef.current = false;
+      engine.setVolume(isMuted ? 0 : volume);
+      await engine.play();
+      setIsPlaying(true);
+    }
   };
 
   const handleNext = async () => {
@@ -46,7 +91,8 @@ export const StudioRadio: React.FC = () => {
     if (!engine) return;
     const next = engine.nextTrack();
     setTrack(next);
-    if (!isPlaying) {
+    if (!isPlaying || !engine.getIsPlaying()) {
+      userPausedRef.current = false;
       engine.setVolume(isMuted ? 0 : volume);
       await engine.play();
       setIsPlaying(true);
@@ -116,6 +162,7 @@ export const StudioRadio: React.FC = () => {
 
             <button
               type="button"
+              data-radio-play-toggle="true"
               onClick={handleTogglePlay}
               aria-label={isPlaying ? 'Pausar rádio' : 'Tocar rádio'}
               title={isPlaying ? 'Pausar' : 'Tocar'}
@@ -179,6 +226,7 @@ export const StudioRadio: React.FC = () => {
           <div className="flex items-center gap-0.5 min-w-0">
             <button
               type="button"
+              data-radio-play-toggle="true"
               onClick={handleTogglePlay}
               aria-label={isPlaying ? 'Pausar rádio' : 'Tocar rádio'}
               className="h-11 w-11 inline-flex items-center justify-center rounded-xl text-[#14141A] dark:text-[#F4F4F6] active:bg-black/[0.08] dark:active:bg-white/[0.12] active:scale-95 transition-all shrink-0 cursor-pointer"

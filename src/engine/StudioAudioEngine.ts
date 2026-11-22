@@ -292,12 +292,7 @@ export class StudioAudioEngine {
     return ctx;
   }
 
-  public async play(): Promise<void> {
-    const ctx = this.ensureContext();
-    if (ctx.state === 'suspended') {
-      await ctx.resume();
-    }
-
+  private startPlayback(ctx: AudioContext): void {
     this.isPlaying = true;
     const now = ctx.currentTime;
     this.nextStepTime = now + 0.06;
@@ -312,6 +307,29 @@ export class StudioAudioEngine {
       this.schedulerId = window.setInterval(() => this.schedulerTick(), 55);
     }
     this.schedulerTick();
+  }
+
+  public async tryStart(): Promise<boolean> {
+    const ctx = this.ensureContext();
+    if (ctx.state === 'suspended') {
+      await Promise.race([
+        ctx.resume().catch(() => {}),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 90)),
+      ]);
+    }
+    if (ctx.state !== 'running') {
+      return false;
+    }
+    this.startPlayback(ctx);
+    return true;
+  }
+
+  public async play(): Promise<void> {
+    const ctx = this.ensureContext();
+    if (ctx.state === 'suspended') {
+      await ctx.resume();
+    }
+    this.startPlayback(ctx);
   }
 
   public pause(): void {

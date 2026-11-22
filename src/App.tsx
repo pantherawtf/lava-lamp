@@ -207,10 +207,6 @@ export default function App() {
           isPlaying={isPlaying}
           onTogglePlay={() => setIsPlaying((p) => !p)}
           onStirFluid={handleStirFluid}
-          onUndo={handleUndo}
-          onRedo={handleRedo}
-          canUndo={historyIndex > 0}
-          canRedo={historyIndex < history.length - 1}
           onRandomizeLamp={handleRandomizeLamp}
           onMobileBlobCountChange={(nextCount) => handleUpdate('blobCount', nextCount)}
           physicsRef={physicsRef}
