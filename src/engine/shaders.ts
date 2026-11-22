@@ -1,16 +1,13 @@
 export const FULLSCREEN_VERT_SHADER = `#version 300 es
 precision highp float;
 
-const vec2 POSITIONS[3] = vec2[3](
-  vec2(-1.0, -1.0),
-  vec2( 3.0, -1.0),
-  vec2(-1.0,  3.0)
-);
-
 out vec2 vUv;
 
 void main() {
-  vec2 pos = POSITIONS[gl_VertexID];
+  vec2 pos = vec2(
+    (gl_VertexID == 1) ? 3.0 : -1.0,
+    (gl_VertexID == 2) ? 3.0 : -1.0
+  );
   vUv = pos * 0.5 + 0.5;
   gl_Position = vec4(pos, 0.0, 1.0);
 }
@@ -24,11 +21,12 @@ out vec4 fragColor;
 
 uniform vec2 uResolution;
 uniform float uTime;
+uniform vec2 uParallax;
 uniform int uTransparentBg;
 
 // Vessel & Composition
-uniform int uVesselShape;     // 0=astro, 1=capsule, 2=bullet, 3=organic, 4=fluid
-uniform int uMetalFinish;     // 0=brushedSilver, 1=darkChrome, 2=roseCopper, 3=matteObsidian, 4=frostedGlass
+uniform int uVesselShape;   // 0: astro, 1: capsule, 2: bullet, 3: organic, 4: fluid
+uniform int uMetalFinish;   // 0: brushedSilver, 1: darkChrome, 2: roseCopper, 3: matteObsidian, 4: frostedGlass
 uniform float uScale;
 uniform float uWidthRatio;
 uniform float uTilt;
@@ -44,13 +42,13 @@ uniform float uTurbulence;
 uniform float uParticles;
 uniform float uGlassRefraction;
 
-// Colors, Lighting & Finishing
+// Colors & Lighting
 uniform vec3 uWaxHot;
 uniform vec3 uWaxCool;
 uniform vec3 uLiquidColor;
 uniform float uLiquidDensity;
+uniform int uBgMode;        // 0: light, 1: dark
 uniform float uBgLuminance;
-uniform int uBgMode;          // 0=light, 1=dark
 uniform float uBottomGlow;
 uniform float uSubsurface;
 uniform float uBloom;
@@ -58,10 +56,7 @@ uniform float uSaturation;
 uniform float uContrast;
 uniform float uFilmGrain;
 
-// Interactive tilt parallax
-uniform vec2 uParallax;
-
-// --- Fast Utilities ---
+const float PI = 3.14159265;
 
 float hash12(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -69,10 +64,15 @@ float hash12(vec2 p) {
   return fract((p3.x + p3.y) * p3.z);
 }
 
-float hash13(vec3 p3) {
-  p3 = fract(p3 * 0.1031);
-  p3 += dot(p3, p3.zyx + 31.32);
-  return fract((p3.x + p3.y) * p3.z);
+float hash31(vec3 p) {
+  p = fract(p * 0.1031);
+  p += dot(p, p.yzx + 33.33);
+  return fract((p.x + p.y) * p.z);
+}
+
+// Fast 3D gyroid turbulence (single evaluation, zero 3D lattice hashes)
+float fastGyroid(vec3 p) {
+  return dot(sin(p), cos(p.yzx));
 }
 
 float smin(float a, float b, float k) {
@@ -86,579 +86,623 @@ mat2 rot2(float a) {
   return mat2(c, -s, s, c);
 }
 
-// --- Vessel Geometry Profiles ---
-// Returns vec4(glassBottom, glassTop, totalBottom, totalTop)
-vec4 getVesselBounds(int shape) {
-  if (shape == 1) {
-    return vec4(-0.34, 0.45, -0.68, 0.59);
-  } else if (shape == 2) {
-    return vec4(-0.18, 0.48, -0.72, 0.68);
-  } else if (shape == 3) {
-    return vec4(-0.30, 0.46, -0.68, 0.62);
-  } else {
-    return vec4(-0.22, 0.42, -0.72, 0.62);
-  }
+// Analytical infinite cylinder intersection in XZ for instant background ray skipping
+vec2 intersectBoundingCylinder(vec3 ro, vec3 rd, float r) {
+  float a = dot(rd.xz, rd.xz);
+  float b = dot(ro.xz, rd.xz);
+  float c = dot(ro.xz, ro.xz) - r * r;
+  float disc = b * b - a * c;
+  if (disc < 0.0 || a < 1e-6) return vec2(1e5, -1e5);
+  float sq = sqrt(disc);
+  return vec2((-b - sq) / a, (-b + sq) / a);
 }
 
-float getMaxVesselRadius(int shape) {
-  if (shape == 1) return 0.192 * uWidthRatio;
-  if (shape == 2) return 0.195 * uWidthRatio;
-  if (shape == 3) return 0.232 * uWidthRatio;
-  return 0.222 * uWidthRatio;
+// Vessel outer radius profile R(y) in normalized lamp coordinates y in [-0.92, 0.92]
+// Glass spans approximately y in [-0.36, 0.56] depending on shape
+float vesselGlassYMin(int shape) {
+  if (shape == 0) return -0.26; // astro
+  if (shape == 1) return -0.34; // capsule
+  if (shape == 2) return -0.24; // bullet
+  if (shape == 3) return -0.30; // organic
+  return -0.70;                 // fluid
 }
 
-float getVesselRadius(float y, int shape) {
-  float r = 0.16;
+float vesselGlassYMax(int shape) {
+  if (shape == 0) return 0.56;  // astro
+  if (shape == 1) return 0.62;  // capsule
+  if (shape == 2) return 0.56;  // bullet
+  if (shape == 3) return 0.56;  // organic
+  return 0.70;                  // fluid
+}
+
+float vesselRadius(int shape, float y) {
+  float w = uWidthRatio;
   if (shape == 0) {
-    if (y >= 0.42) {
-      float t = clamp((y - 0.42) * 5.0, 0.0, 1.0);
-      r = mix(0.106, 0.056, t);
-    } else if (y >= -0.22) {
-      float t = (y + 0.22) * 1.5625;
-      float cone = mix(0.214, 0.106, pow(t, 0.92));
-      r = mix(0.194, cone, smoothstep(0.0, 0.12, t));
-    } else if (y >= -0.47) {
-      float t = (y + 0.47) * 4.0;
-      r = mix(0.088, 0.194, t);
+    // Classic Mathmos Astro
+    if (y < -0.58) {
+      // Lower hourglass cone foot [-0.90, -0.58]
+      float t = clamp((y + 0.90) / 0.32, 0.0, 1.0);
+      return mix(0.245, 0.115, t) * w;
+    } else if (y < -0.26) {
+      // Upper hourglass base [-0.58, -0.26]
+      float t = clamp((y + 0.58) / 0.32, 0.0, 1.0);
+      return mix(0.115, 0.255, t) * w;
+    } else if (y < 0.56) {
+      // Conical glass vessel with soft lower bulge
+      float t = clamp((y + 0.26) / 0.82, 0.0, 1.0);
+      float belly = sin(clamp(t * 4.2, 0.0, PI)) * 0.018 * (1.0 - t);
+      return (mix(0.255, 0.128, pow(t, 0.94)) + belly) * w;
     } else {
-      float t = clamp((-0.47 - y) * 4.0, 0.0, 1.0);
-      r = mix(0.088, 0.202, t);
+      // Conical aluminum cap [0.56, 0.88]
+      float t = clamp((y - 0.56) / 0.32, 0.0, 1.0);
+      return mix(0.128, 0.078, t) * w;
     }
   } else if (shape == 1) {
-    if (y >= 0.45) {
-      float t = clamp((y - 0.45) * 7.1428, 0.0, 1.0);
-      r = 0.174 * pow(max(0.0, 1.0 - pow(t, 2.5)), 0.42);
-    } else if (y >= -0.55) {
-      r = 0.174;
-    } else if (y >= -0.64) {
-      float t = clamp((-0.55 - y) * 11.111, 0.0, 1.0);
-      r = mix(0.174, 0.118, smoothstep(0.0, 1.0, t));
+    // Modern Cylindrical Capsule
+    if (y < -0.84) {
+      // Flat plinth disc
+      return 0.242 * w;
+    } else if (y < -0.76) {
+      // Recessed pedestal neck
+      return 0.172 * w;
+    } else if (y < -0.34) {
+      // Rounded cylindrical base cup
+      float t = clamp((y + 0.76) / 0.12, 0.0, 1.0);
+      float arc = sin(t * PI * 0.5);
+      return mix(0.176, 0.228, arc) * w;
+    } else if (y < 0.62) {
+      // Straight glass cylinder
+      return 0.226 * w;
     } else {
-      float t = clamp((-0.64 - y) * 25.0, 0.0, 1.0);
-      r = mix(0.125, 0.188, smoothstep(0.0, 0.6, t));
+      // Domed rounded metallic cap [0.62, 0.88]
+      float t = clamp((y - 0.70) / 0.18, 0.0, 1.0);
+      return 0.228 * sqrt(max(0.0, 1.0 - t * t)) * w;
     }
   } else if (shape == 2) {
-    if (y >= 0.48) {
-      float t = clamp((y - 0.48) * 5.0, 0.0, 1.0);
-      r = 0.092 * pow(max(0.0, 1.0 - pow(t, 2.2)), 0.48);
-    } else if (y >= -0.18) {
-      float t = (y + 0.18) * 1.5151;
-      r = mix(0.142, 0.092, t) + sin(t * 3.14159) * 0.032;
-    } else if (y >= -0.64) {
-      float t = (-0.18 - y) * 2.1739;
-      r = mix(0.142, 0.058, pow(t, 0.85));
+    // Sleek Tall Rose-Copper Bullet
+    if (y < -0.78) {
+      // Trumpet flared saucer base [-0.90, -0.78]
+      float t = clamp((y + 0.90) / 0.12, 0.0, 1.0);
+      return mix(0.255, 0.088, pow(t, 0.68)) * w;
+    } else if (y < -0.24) {
+      // Tall tapering chalice base [-0.78, -0.24]
+      float t = clamp((y + 0.78) / 0.54, 0.0, 1.0);
+      return (mix(0.09, 0.188, pow(t, 0.88)) + sin(t * PI) * 0.012) * w;
+    } else if (y < 0.56) {
+      // Curved spindle glass [-0.24, 0.56]
+      float t = clamp((y + 0.24) / 0.80, 0.0, 1.0);
+      float swell = sin(pow(t, 0.74) * PI) * 0.038;
+      return (mix(0.188, 0.118, pow(t, 1.1)) + swell) * w;
     } else {
-      float t = clamp((-0.64 - y) * 12.5, 0.0, 1.0);
-      r = mix(0.062, 0.192, smoothstep(0.0, 1.0, t));
+      // Parabolic ogive nose cap [0.56, 0.90]
+      float t = clamp((y - 0.56) / 0.34, 0.0, 1.0);
+      return 0.118 * pow(max(0.0, 1.0 - t), 0.62) * w;
     }
   } else {
-    if (y >= 0.46) {
-      float t = clamp((y - 0.46) * 6.25, 0.0, 1.0);
-      r = 0.115 * pow(max(0.0, 1.0 - pow(t, 2.2)), 0.45);
-    } else if (y >= -0.30) {
-      float t = (y + 0.30) * 1.3157;
-      r = 0.16 + 0.065 * sin(t * 3.6128 - 0.2) - 0.045 * t;
+    // Organic Sculpted Ampoule (shape == 3)
+    if (y < -0.30) {
+      float t = clamp((y + 0.88) / 0.58, 0.0, 1.0);
+      float pinch = sin(t * PI) * 0.095;
+      return (mix(0.24, 0.18, t) - pinch) * w;
+    } else if (y < 0.56) {
+      float t = clamp((y + 0.30) / 0.86, 0.0, 1.0);
+      float swell = sin(pow(t, 0.7) * PI) * 0.085;
+      return (mix(0.18, 0.118, t) + swell) * w;
     } else {
-      float t = clamp((-0.30 - y) * 2.6315, 0.0, 1.0);
-      r = 0.148 - 0.055 * sin(t * 3.14159) + 0.04 * t;
+      float t = clamp((y - 0.56) / 0.30, 0.0, 1.0);
+      return 0.118 * pow(max(0.0, cos(t * PI * 0.5)), 0.72) * w;
     }
   }
-  return r * uWidthRatio;
 }
 
-float sdVesselOuter(vec3 p, int shape, vec4 b) {
-  float cy = clamp(p.y, b.z, b.w);
-  float r = getVesselRadius(cy, shape);
-  float dr = length(p.xz) - r;
-  float dy = max(b.z - p.y, p.y - b.w);
-  float d = (dr > 0.0 && dy > 0.0) ? length(vec2(dr, dy)) : max(dr, dy);
-  return d * 0.72;
-}
-
-// Fast 4-tap Tetrahedron Normal (33% fewer SDF evaluations)
-vec3 calcVesselNormal(vec3 p, int shape, vec4 b) {
-  const vec2 e = vec2(0.0025, -0.0025);
-  return normalize(
-    e.xyy * sdVesselOuter(p + e.xyy, shape, b) +
-    e.yyx * sdVesselOuter(p + e.yyx, shape, b) +
-    e.yxy * sdVesselOuter(p + e.yxy, shape, b) +
-    e.xxx * sdVesselOuter(p + e.xxx, shape, b)
-  );
-}
-
-// --- Fast 3D Wax Metaball SDF ---
-float mapWax(vec3 p, vec4 bounds, bool isPureFluid) {
-  vec3 bp = p;
-  if (!isPureFluid) {
-    float glassMid = 0.5 * (bounds.x + bounds.y);
-    float invHalf = 0.88 / max(bounds.y - bounds.x, 0.01);
-    bp.y = (p.y - glassMid) * invHalf;
-    bp.xz /= max(uWidthRatio, 0.4);
-  } else {
-    bp *= 0.62;
+// Signed distance to outer lamp body; returns vec2(dist, matId)
+// matId: 1.0 = metal base/cap, 2.0 = glass vessel
+vec2 mapLampOuter(vec3 p) {
+  if (uVesselShape == 4) {
+    return vec2(1e4, 0.0);
   }
+  float yBottom = -0.90;
+  float yTop = (uVesselShape == 2) ? 0.90 : 0.88;
+  float yc = clamp(p.y, yBottom, yTop);
+  float r = vesselRadius(uVesselShape, yc);
+  float dRad = length(p.xz) - r;
+  float dCap = max(yBottom - p.y, p.y - yTop);
+  // Smooth outer shell distance scaled conservatively for steep slopes
+  float d = (dCap > 0.0) ? length(vec2(max(dRad, 0.0), dCap)) : max(dRad * 0.82, dCap);
 
-  float d = 10.0;
-  float k = uViscosity;
+  float gMin = vesselGlassYMin(uVesselShape);
+  float gMax = vesselGlassYMax(uVesselShape);
+  float matId = (p.y >= gMin && p.y <= gMax) ? 2.0 : 1.0;
+  return vec2(d, matId);
+}
 
+// Signed distance to internal molten wax metaballs
+float mapWax(vec3 p) {
+  float gMin = vesselGlassYMin(uVesselShape);
+  float gMax = vesselGlassYMax(uVesselShape);
+  float gSpan = gMax - gMin;
+  float w = uWidthRatio;
+  float k = max(0.035, uViscosity * 0.92);
+
+  float d = 1e4;
   for (int i = 0; i < 14; i++) {
     if (i >= uBlobCount) break;
     vec4 b = uBlobs[i];
-    vec3 q = bp - b.xyz;
+    if (b.w <= 0.001) continue;
+
+    // Map physics y in [-0.46, 0.46] to vessel glass interior
+    float yNorm = clamp((b.y + 0.46) / 0.92, 0.0, 1.0);
+    float by = gMin + 0.06 + yNorm * (gSpan - 0.12);
+    float br = b.w * (uVesselShape == 4 ? 1.55 : 1.18) * sqrt(w);
+    float wallR = (uVesselShape == 4) ? 0.45 * w : max(0.05, vesselRadius(uVesselShape, by) - 0.022);
+    br = min(br, wallR * 0.78);
+
+    float maxCenter = max(0.01, wallR - br * 0.72);
+    vec2 bxz = b.xz * (uVesselShape == 4 ? 1.45 : 0.95 * w);
+    float distXZ = length(bxz);
+    if (distXZ > maxCenter) {
+      bxz *= maxCenter / distXZ;
+    }
+
+    vec3 q = p - vec3(bxz.x, by, bxz.y);
+    // Gentle teardrop vertical stretch
     q.y *= 0.86;
-    d = smin(d, length(q) - b.w, k);
+    float sd = length(q) - br;
+    d = smin(d, sd, k);
   }
 
-  if (!isPureFluid) {
-    float poolH = -0.435 + 0.022 * sin(bp.x * 11.0 + uTime * 0.9);
-    d = smin(d, bp.y - poolH, k * 1.15);
-    float topCap = (0.455 + 0.014 * cos(bp.x * 9.0 - uTime * 0.7)) - bp.y;
-    d = smin(d, topCap, k * 0.65);
+  // Heated molten wax pool resting on bottom bulb (for physical vessels)
+  if (uVesselShape != 4) {
+    float poolR = vesselRadius(uVesselShape, gMin + 0.02) * 0.86;
+    vec3 qp = p - vec3(sin(uTime * 0.55) * 0.02, gMin + 0.015, cos(uTime * 0.48) * 0.02);
+    qp.y *= 2.4;
+    float dPool = length(qp) - poolR;
+    d = smin(d, dPool, k * 1.15);
   }
 
-  // Ultra-fast smooth 3D gyroid organic contour (replaces expensive 16-hash 3D noise)
-  if (uTurbulence > 0.005) {
-    vec3 tp = bp * 9.5 + vec3(0.0, -uTime * 0.55, uTime * 0.25);
-    float gyroid = dot(sin(tp), cos(tp.yzx)) * 0.3333;
-    d += gyroid * 0.048 * uTurbulence;
+  // Fast organic surface turbulence
+  if (uTurbulence > 0.002) {
+    float g = fastGyroid(p * 11.5 + vec3(0.0, -uTime * 1.1, uTime * 0.45));
+    d += g * uTurbulence * 0.026;
   }
 
-  return d * (isPureFluid ? 1.0 : 0.76);
+  // Strict interior confinement so wax never pokes outside the glass wall
+  if (uVesselShape != 4) {
+    float innerWall = vesselRadius(uVesselShape, clamp(p.y, gMin, gMax)) - 0.016;
+    float dWall = length(p.xz) - innerWall;
+    float dCaps = max((gMin + 0.008) - p.y, p.y - (gMax - 0.022));
+    d = max(d, max(dWall, dCaps));
+  }
+
+  return d;
 }
 
-vec3 calcWaxNormal(vec3 p, vec4 bounds, bool isPureFluid) {
-  const vec2 e = vec2(0.0032, -0.0032);
+// 4-tap tetrahedron normal for outer shell
+vec3 calcOuterNormal(vec3 p) {
+  const vec2 e = vec2(0.0018, -0.0018);
   return normalize(
-    e.xyy * mapWax(p + e.xyy, bounds, isPureFluid) +
-    e.yyx * mapWax(p + e.yyx, bounds, isPureFluid) +
-    e.yxy * mapWax(p + e.yxy, bounds, isPureFluid) +
-    e.xxx * mapWax(p + e.xxx, bounds, isPureFluid)
+    e.xyy * mapLampOuter(p + e.xyy).x +
+    e.yyx * mapLampOuter(p + e.yyx).x +
+    e.yxy * mapLampOuter(p + e.yxy).x +
+    e.xxx * mapLampOuter(p + e.xxx).x
   );
 }
 
-// --- Suspended Glitter / Micro-Bubbles ---
-float evalGlitter(vec3 p, vec4 bounds) {
-  float hNorm = clamp((p.y - bounds.x) / max(bounds.y - bounds.x, 0.01), 0.0, 1.0);
-  vec3 gp = p * 34.0 + vec3(0.0, -uTime * 0.85, 0.0);
-  vec3 cell = floor(gp);
-  vec3 f = fract(gp) - 0.5;
-  float h = hash13(cell);
-  float threshold = mix(0.985, 0.72, uParticles);
-  if (h < threshold) return 0.0;
-
-  vec3 jitterPos = vec3(
-    hash13(cell + 13.7) - 0.5,
-    hash13(cell + 29.1) - 0.5,
-    hash13(cell + 53.3) - 0.5
-  ) * 0.65;
-  float dist = length(f - jitterPos);
-  float size = mix(0.08, 0.21, fract(h * 41.3));
-  float dotVal = smoothstep(size, size * 0.18, dist);
-  float bottomBoost = mix(1.75, 0.65, pow(hNorm, 0.65));
-  float twinkle = 0.68 + 0.32 * sin(uTime * 3.5 + h * 62.8);
-  return dotVal * bottomBoost * twinkle * uParticles;
+// 4-tap tetrahedron normal for wax metaballs
+vec3 calcWaxNormal(vec3 p) {
+  const vec2 e = vec2(0.003, -0.003);
+  return normalize(
+    e.xyy * mapWax(p + e.xyy) +
+    e.yyx * mapWax(p + e.yyx) +
+    e.yxy * mapWax(p + e.yxy) +
+    e.xxx * mapWax(p + e.xxx)
+  );
 }
 
-// --- Metallic Cap & Base Shading ---
-vec3 shadeMetal(vec3 p, vec3 n, vec3 rd, int finish, vec4 bounds) {
-  vec3 ref = reflect(rd, n);
-  float fresnel = pow(1.0 - max(dot(-rd, n), 0.0), 4.0);
+// Studio environment reflection color (softbox strips + cool/warm studio sweep)
+vec3 sampleStudioEnv(vec3 refDir, float isDark) {
+  float up = refDir.y * 0.5 + 0.5;
+  vec3 baseEnv = isDark > 0.5
+    ? mix(vec3(0.04, 0.045, 0.06), vec3(0.20, 0.22, 0.28), up)
+    : mix(vec3(0.58, 0.60, 0.64), vec3(0.95, 0.96, 0.99), up);
 
-  float softboxL = smoothstep(0.25, 0.88, dot(ref, normalize(vec3(-0.78, 0.32, 0.55))));
-  float softboxR = smoothstep(0.35, 0.92, dot(ref, normalize(vec3(0.82, 0.18, 0.52))));
-  float topLight = smoothstep(0.1, 0.9, ref.y) * 0.35;
-  float darkBand = smoothstep(-0.35, 0.25, ref.z);
+  // Two crisp vertical studio softbox strips
+  float stripL = smoothstep(0.76, 0.96, dot(normalize(refDir.xz), normalize(vec2(-0.78, 0.62))))
+               * smoothstep(0.92, 0.15, abs(refDir.y));
+  float stripR = smoothstep(0.80, 0.97, dot(normalize(refDir.xz), normalize(vec2(0.82, 0.57))))
+               * smoothstep(0.88, 0.12, abs(refDir.y));
+  float topBox = smoothstep(0.78, 0.96, refDir.y);
 
-  float distToGlass = min(abs(p.y - bounds.x), abs(p.y - bounds.y));
-  float glassBounce = exp(-distToGlass * 11.0) * (0.45 + 0.35 * uBottomGlow);
-  vec3 glowColor = mix(uWaxHot, uLiquidColor, 0.35);
-
-  if (finish == 0) {
-    float grain = hash12(floor(p.xy * 260.0 + p.z * 90.0));
-    float brush = hash12(vec2(floor(p.y * 190.0), floor(atan(p.z, p.x) * 28.0)));
-    float sparkle = smoothstep(0.84, 0.99, grain) * 0.35;
-    vec3 baseCol = vec3(0.66, 0.68, 0.72) * (0.85 + 0.18 * brush);
-    float diff = 0.35 + 0.65 * max(dot(n, normalize(vec3(-0.6, 0.45, 0.7))), 0.0);
-    float spec = pow(max(dot(ref, normalize(vec3(-0.55, 0.35, 0.75))), 0.0), 18.0) * 0.75;
-    vec3 col = baseCol * diff + vec3(0.95, 0.97, 1.0) * (spec + softboxL * 0.38 + softboxR * 0.22 + sparkle);
-    return col + glowColor * glassBounce * 0.22;
-  } else if (finish == 1) {
-    float brush = hash12(vec2(floor(p.y * 160.0), 1.0)) * 0.07;
-    vec3 baseCol = vec3(0.14, 0.13, 0.15) + brush;
-    vec3 env = mix(vec3(0.05, 0.05, 0.06), vec3(0.82, 0.80, 0.84), softboxL * 0.92 + softboxR * 0.65 + topLight);
-    vec3 col = mix(baseCol, env, 0.48 + 0.45 * fresnel) * (0.65 + 0.35 * darkBand);
-    return col + glowColor * glassBounce * 0.45;
-  } else if (finish == 2) {
-    vec3 copperTint = vec3(0.94, 0.68, 0.58);
-    vec3 copperDark = vec3(0.32, 0.16, 0.13);
-    float sheen = softboxL * 1.15 + softboxR * 0.75 + topLight * 0.6;
-    float midGrad = 0.5 + 0.5 * dot(n, normalize(vec3(-0.4, 0.3, 0.85)));
-    vec3 col = mix(copperDark, copperTint, smoothstep(0.05, 0.92, midGrad * 0.72 + sheen * 0.55));
-    col += vec3(1.0, 0.92, 0.88) * pow(max(dot(ref, normalize(vec3(-0.6, 0.25, 0.75))), 0.0), 28.0) * 0.85;
-    return col + copperTint * fresnel * 0.25 + glowColor * glassBounce * 0.28;
-  } else if (finish == 3) {
-    vec3 baseCol = vec3(0.055, 0.048, 0.062);
-    float diff = max(dot(n, normalize(vec3(-0.4, 0.5, 0.75))), 0.0);
-    return baseCol * (0.65 + 0.65 * diff) + vec3(0.18, 0.16, 0.2) * fresnel * 0.45 + glowColor * glassBounce * 0.52;
-  } else {
-    vec3 baseCol = mix(vec3(0.22, 0.24, 0.3), glowColor, 0.48);
-    float rim = pow(1.0 - max(dot(-rd, n), 0.0), 2.5);
-    return baseCol * (0.45 + 0.55 * (softboxL + softboxR * 0.6)) + vec3(0.95) * rim * 0.48 + glowColor * glassBounce * 0.75;
-  }
+  float boost = isDark > 0.5 ? 1.05 : 0.85;
+  baseEnv += vec3(1.0, 0.99, 0.98) * stripL * 1.15 * boost;
+  baseEnv += vec3(1.0, 0.96, 0.92) * stripR * 0.88 * boost;
+  baseEnv += vec3(0.95, 0.97, 1.0) * topBox * 0.55;
+  return baseEnv;
 }
 
-// --- Render Lava Lamp Instance with Analytical Bounding Cylinder Clip ---
-vec4 renderLamp(vec2 p, int shape, float scale, vec3 bgBehind) {
-  vec2 lp = p / max(scale, 0.1);
-  if (abs(uTilt) > 0.0001) {
-    lp = rot2(uTilt) * lp;
-  }
+// Infinite seamless studio cyclorama backdrop (Light & Dark modes)
+vec3 renderStudioBackground(vec2 uv, vec2 pScreen) {
+  float isDark = float(uBgMode);
+  float lum = clamp(uBgLuminance, 0.0, 1.0);
 
-  vec3 ro = vec3(uParallax.x * 0.22, uParallax.y * 0.14, 2.35);
-  vec3 rd = normalize(vec3(lp - ro.xy * 0.08, -2.15));
-  vec4 bounds = getVesselBounds(shape);
-
-  // Mode 4: Pure Borderless Fluid
-  if (shape == 4) {
-    float t = 0.0;
-    bool hit = false;
-    vec3 hitPos = vec3(0.0);
-    for (int i = 0; i < 28; i++) {
-      vec3 q = ro + rd * t;
-      float d = mapWax(q, bounds, true);
-      if (d < 0.003) {
-        hit = true;
-        hitPos = q;
-        break;
-      }
-      t += max(d, 0.022);
-      if (t > 4.2) break;
-    }
-
-    vec3 bgFluid = mix(bgBehind, uLiquidColor, uLiquidDensity * 0.85);
-    float bottomRad = exp(-length(lp - vec2(0.0, -0.58)) * 2.1) * uBottomGlow;
-    bgFluid += mix(uWaxHot, uLiquidColor, 0.3) * bottomRad * 0.55;
-
-    if (uParticles > 0.01) {
-      float g1 = evalGlitter(vec3(lp * 0.65, 0.1), bounds);
-      bgFluid += mix(uWaxHot, vec3(1.0), 0.55) * g1 * 1.1;
-    }
-
-    if (!hit) {
-      return vec4(bgFluid, uTransparentBg == 1 ? clamp(uLiquidDensity * 0.6 + bottomRad * 0.4, 0.0, 1.0) : 1.0);
-    }
-
-    vec3 n = calcWaxNormal(hitPos, bounds, true);
-    float fres = pow(1.0 - max(dot(-rd, n), 0.0), 2.2);
-    float heat = clamp(1.0 - (hitPos.y + 0.55) * 0.85, 0.0, 1.0);
-    vec3 waxCol = mix(uWaxCool, uWaxHot, pow(heat, 0.85));
-    float diff = 0.35 + 0.65 * max(dot(n, normalize(vec3(-0.4, -0.55, 0.72))), 0.0);
-    float spec = pow(max(dot(reflect(rd, n), normalize(vec3(-0.5, 0.45, 0.74))), 0.0), 26.0);
-    vec3 col = waxCol * (diff + uSubsurface * (0.45 + 0.65 * fres)) + uWaxHot * bottomRad * 0.4;
-    col += vec3(1.0) * spec * 0.45 * uGlassRefraction;
-    return vec4(col, 1.0);
-  }
-
-  // Exact analytical ray vs bounding cylinder clip (skips >80% of screen pixels instantly!)
-  float maxR = getMaxVesselRadius(shape) + 0.018;
-  if (lp.y < bounds.z - 0.12 || lp.y > bounds.w + 0.12) {
-    return vec4(0.0);
-  }
-
-  float a = dot(rd.xz, rd.xz);
-  float b = dot(ro.xz, rd.xz);
-  float c = dot(ro.xz, ro.xz) - maxR * maxR;
-  float disc = b * b - a * c;
-  if (disc < 0.0) {
-    return vec4(0.0);
-  }
-
-  float sqrtDisc = sqrt(disc);
-  float tNear = max((-b - sqrtDisc) / a, 0.0);
-  float tFar = (-b + sqrtDisc) / a;
-  if (tFar < 0.0) {
-    return vec4(0.0);
-  }
-
-  // Tight raymarch starting right on the bounding cylinder
-  float t = tNear;
-  bool hitShell = false;
-  vec3 pos = vec3(0.0);
-
-  for (int i = 0; i < 18; i++) {
-    pos = ro + rd * t;
-    float d = sdVesselOuter(pos, shape, bounds);
-    if (d < 0.0016) {
-      hitShell = true;
-      break;
-    }
-    t += max(d, 0.01);
-    if (t > tFar + 0.02) break;
-  }
-
-  if (!hitShell) {
-    return vec4(0.0);
-  }
-
-  vec3 nOuter = calcVesselNormal(pos, shape, bounds);
-  bool isGlass = (pos.y > bounds.x + 0.004 && pos.y < bounds.y - 0.004);
-
-  if (!isGlass) {
-    vec3 metalCol = shadeMetal(pos, nOuter, rd, uMetalFinish, bounds);
-    float seamDist = min(abs(pos.y - bounds.x), abs(pos.y - bounds.y));
-    metalCol *= mix(0.62, 1.0, smoothstep(0.0, 0.012, seamDist));
-    return vec4(metalCol, 1.0);
-  }
-
-  // --- Inside Glass Body ---
-  float ndotv = max(dot(-rd, nOuter), 0.0);
-  float fresnel = pow(1.0 - ndotv, 3.2);
-  float glassRim = pow(1.0 - ndotv, 1.6);
-
-  vec3 rdIn = normalize(mix(rd, refract(rd, nOuter, 1.0 / (1.0 + 0.28 * uGlassRefraction)), 0.75));
-
-  float tIn = 0.012;
-  float maxIn = maxR * 2.15;
-  bool hitWax = false;
-  vec3 waxPos = vec3(0.0);
-  float waxGlowAccum = 0.0;
-  float glitterAccum = 0.0;
-  float liquidPath = 0.0;
-
-  for (int i = 0; i < 24; i++) {
-    vec3 q = pos + rdIn * tIn;
-    float rWall = getVesselRadius(clamp(q.y, bounds.x, bounds.y), shape);
-    if (length(q.xz) > rWall + 0.006 || q.y < bounds.x - 0.01 || q.y > bounds.y + 0.01) {
-      liquidPath = tIn;
-      break;
-    }
-
-    float dw = mapWax(q, bounds, false);
-    waxGlowAccum += exp(-max(dw, 0.0) * 16.0) * 0.036;
-
-    if (uParticles > 0.01 && (i == 5 || i == 13)) {
-      glitterAccum += evalGlitter(q, bounds) * 1.45;
-    }
-
-    if (dw < 0.0028) {
-      hitWax = true;
-      waxPos = q;
-      liquidPath = tIn;
-      break;
-    }
-
-    tIn += clamp(dw * 0.85, 0.01, 0.042);
-    if (tIn > maxIn) {
-      liquidPath = maxIn;
-      break;
-    }
-  }
-
-  float hNorm = clamp((pos.y - bounds.x) / max(bounds.y - bounds.x, 0.01), 0.0, 1.0);
-  float bulbDist = length(vec2(pos.x, (pos.y - bounds.x) * 1.15));
-  float bulbLight = exp(-bulbDist * 3.4) * uBottomGlow;
-  float bulbCore = exp(-bulbDist * 9.5) * uBottomGlow;
-
-  float liqAlpha = clamp(uLiquidDensity * (0.55 + 1.45 * liquidPath), 0.0, 0.96);
-  vec3 liquidCol = uLiquidColor * (0.62 + 0.55 * (1.0 - hNorm * 0.45));
-  vec3 bulbTint = mix(uWaxHot, vec3(1.0, 0.96, 0.9), 0.45);
-  liquidCol += bulbTint * bulbLight * (0.42 + 0.35 * (1.0 - uLiquidDensity * 0.5));
-  liquidCol += mix(uWaxCool, uWaxHot, 0.5) * waxGlowAccum * (0.45 + 0.4 * uSubsurface);
-
-  vec3 interiorColor = mix(bgBehind, liquidCol, liqAlpha);
-  interiorColor += uLiquidColor * glassRim * (0.18 + 0.35 * uLiquidDensity);
-
-  if (hitWax) {
-    vec3 nw = calcWaxNormal(waxPos, bounds, false);
-    float waxH = clamp((waxPos.y - bounds.x) / max(bounds.y - bounds.x, 0.01), 0.0, 1.0);
-
-    float innerD = mapWax(waxPos + rdIn * 0.045, bounds, false);
-    float thinness = smoothstep(-0.045, 0.008, innerD);
-    float waxRim = pow(1.0 - max(dot(-rdIn, nw), 0.0), 1.85);
-
-    float heatFactor = clamp(pow(1.0 - waxH, 1.35) * (0.65 + 0.55 * uBottomGlow) + bulbCore * 0.55, 0.0, 1.0);
-    vec3 baseWax = mix(uWaxCool, uWaxHot, heatFactor);
-
-    vec3 bulbDir = normalize(vec3(0.0, bounds.x - 0.12, 0.08) - waxPos);
-    float bulbDiff = max(dot(nw, bulbDir), 0.0);
-    float keyDiff = max(dot(nw, normalize(vec3(-0.55, 0.35, 0.78))), 0.0);
-
-    float sss = (0.35 + 0.65 * thinness + 0.45 * waxRim) * uSubsurface;
-    vec3 waxShaded = baseWax * (0.28 + 0.52 * keyDiff + 0.65 * bulbDiff * (0.5 + 0.5 * uBottomGlow) + sss * 0.78);
-    waxShaded += bulbTint * bulbCore * (0.65 + 0.45 * thinness);
-
-    float waxSpec = pow(max(dot(reflect(rdIn, nw), normalize(vec3(-0.52, 0.32, 0.8))), 0.0), 22.0);
-    waxShaded += mix(vec3(1.0), uWaxHot, 0.35) * waxSpec * 0.42;
-
-    float frontTint = clamp(uLiquidDensity * liquidPath * 2.1, 0.0, 0.68);
-    interiorColor = mix(waxShaded, liquidCol, frontTint * 0.58);
-  } else {
-    interiorColor += bulbTint * bulbCore * 0.58;
-  }
-
-  if (glitterAccum > 0.001) {
-    vec3 sparkleCol = mix(uWaxHot, vec3(0.95, 0.99, 1.0), 0.55);
-    interiorColor += sparkleCol * glitterAccum * 1.15;
-  }
-
-  vec3 refOut = reflect(rd, nOuter);
-  float stripL = smoothstep(0.62, 0.94, dot(nOuter, normalize(vec3(-0.82, 0.08, 0.56))));
-  float stripR = smoothstep(0.76, 0.97, dot(nOuter, normalize(vec3(0.86, 0.05, 0.50))));
-  float specSharp = pow(max(dot(refOut, normalize(vec3(-0.72, 0.2, 0.66))), 0.0), 40.0);
-
-  vec3 studioRefTint = uBgMode == 0 ? vec3(0.96, 0.97, 1.0) : vec3(0.78, 0.82, 0.90);
-  vec3 glassReflectCol = mix(studioRefTint, vec3(uBgLuminance) + vec3(0.28), 0.2);
-  interiorColor += glassReflectCol * (stripL * 0.34 + stripR * 0.24 + specSharp * 0.45) * uGlassRefraction;
-
-  vec3 rimTint = mix(glassReflectCol, uWaxHot, 0.2);
-  interiorColor = mix(interiorColor, rimTint, fresnel * 0.44 * uGlassRefraction);
-
-  float seamTop = smoothstep(0.0, 0.025, bounds.y - pos.y);
-  float seamBot = smoothstep(0.0, 0.022, pos.y - bounds.x);
-  interiorColor *= mix(0.68, 1.0, seamTop);
-  interiorColor += bulbTint * (1.0 - seamBot) * 0.38 * uBottomGlow;
-
-  return vec4(interiorColor, 1.0);
-}
-
-// --- Unified Infinite Studio Cyclorama Backdrop (Light & Dark Modes) ---
-vec3 renderBackground(vec2 p, int shape) {
-  vec4 bounds = getVesselBounds(shape == 4 ? 0 : shape);
-  float baseY = bounds.z * uScale + uOffset.y;
-  float coveY = baseY + 0.07;
-
-  float coveCurve = exp(-pow((p.y - coveY) * 2.75, 2.0));
-  float floorMask = smoothstep(coveY + 0.38, coveY - 0.52, p.y);
-  float wallSoftbox = exp(-length((p - vec2(-0.14, 0.26)) * vec2(0.72, 0.62)) * 1.12);
-  float radialVignette = clamp(1.0 - dot(p * vec2(0.72, 0.85), p * vec2(0.72, 0.85)) * 0.16, 0.55, 1.0);
-
-  float lumTune = clamp(uBgLuminance, 0.0, 1.0);
   vec3 col;
-
-  if (uBgMode == 0) {
-    float lift = mix(0.78, 1.04, lumTune);
-    vec3 wallTop = vec3(0.955, 0.958, 0.966) * lift;
-    vec3 wallKey = vec3(0.995, 0.995, 1.000) * lift;
-    vec3 floorTone = vec3(0.905, 0.910, 0.922) * lift;
-
-    col = mix(wallTop, wallKey, wallSoftbox * 0.55);
-    col = mix(col, floorTone, floorMask * 0.58);
-    col *= (1.0 - coveCurve * 0.042);
-    col *= mix(0.91, 1.0, radialVignette);
-
-    if (shape != 4) {
-      vec2 spillP = (p - vec2(uOffset.x, baseY - 0.02)) * vec2(1.05, 2.8);
-      float spill = exp(-dot(spillP, spillP) * 2.4) * (0.045 + 0.03 * uBottomGlow);
-      col += mix(uLiquidColor, uWaxHot, 0.45) * spill;
-    }
+  if (isDark > 0.5) {
+    vec3 topC = vec3(0.032, 0.034, 0.046) + lum * vec3(0.06, 0.065, 0.085);
+    vec3 midC = vec3(0.055, 0.058, 0.075) + lum * vec3(0.085, 0.09, 0.115);
+    vec3 floorC = vec3(0.025, 0.026, 0.034) + lum * vec3(0.05, 0.052, 0.068);
+    float horizon = smoothstep(0.18, 0.52, uv.y);
+    col = mix(floorC, mix(midC, topC, smoothstep(0.45, 1.0, uv.y)), horizon);
   } else {
-    float lift = mix(0.35, 1.55, lumTune);
-    vec3 darkWall = vec3(0.052, 0.055, 0.068) * lift;
-    vec3 darkKey = vec3(0.105, 0.110, 0.132) * lift;
-    vec3 darkFloor = vec3(0.038, 0.040, 0.050) * lift;
-
-    col = mix(darkWall, darkKey, wallSoftbox * 0.65);
-    col = mix(col, darkFloor, floorMask * 0.62);
-    col *= (1.0 - coveCurve * 0.18);
-    col *= mix(0.62, 1.0, radialVignette);
-
-    if (shape != 4) {
-      vec2 backSpillP = (p - vec2(uOffset.x, uOffset.y + 0.05)) * vec2(1.1, 0.78);
-      float backSpill = exp(-dot(backSpillP, backSpillP) * 2.2) * (0.085 + 0.06 * uBottomGlow);
-      vec2 floorSpillP = (p - vec2(uOffset.x, baseY - 0.03)) * vec2(0.95, 3.1);
-      float floorSpill = exp(-dot(floorSpillP, floorSpillP) * 2.6) * (0.14 + 0.09 * uBottomGlow);
-      vec3 lampSpillCol = mix(uLiquidColor, uWaxHot, 0.52);
-      col += lampSpillCol * (backSpill + floorSpill);
-    }
+    vec3 topC = vec3(0.82, 0.835, 0.865) + (lum - 0.5) * 0.22;
+    vec3 midC = vec3(0.915, 0.922, 0.942) + (lum - 0.5) * 0.18;
+    vec3 floorC = vec3(0.855, 0.865, 0.892) + (lum - 0.5) * 0.20;
+    float horizon = smoothstep(0.14, 0.46, uv.y);
+    col = mix(floorC, mix(midC, topC, smoothstep(0.45, 1.0, uv.y)), horizon);
   }
 
-  if (uStudioShadow > 0.01 && shape != 4) {
-    vec2 sp = (p - uOffset) / max(uScale, 0.1);
-    float shadowStrength = uBgMode == 0 ? 1.0 : 0.65;
+  // Subtle architectural studio vignette
+  float vig = 1.0 - dot(pScreen * vec2(0.32, 0.26), pScreen * vec2(0.32, 0.26));
+  col *= clamp(0.84 + 0.18 * vig, 0.72, 1.06);
 
-    vec2 wallP = sp - vec2(0.42, -0.02);
-    wallP.x -= (wallP.y - bounds.z) * 0.11;
-    if (wallP.y > bounds.z - 0.05 && wallP.y < bounds.w + 0.05 && abs(wallP.x) < 0.45) {
-      float r = getVesselRadius(clamp(wallP.y, bounds.z, bounds.w), shape) * 1.06;
-      float edge = smoothstep(r + 0.09, r - 0.04, abs(wallP.x));
-      float vFade = smoothstep(bounds.w + 0.04, bounds.w - 0.09, wallP.y) *
-                    smoothstep(bounds.z - 0.04, bounds.z + 0.05, wallP.y);
-      float isGlassShadow = smoothstep(bounds.x, bounds.x + 0.06, wallP.y) *
-                            smoothstep(bounds.y, bounds.y - 0.06, wallP.y);
-      float shadowMask = edge * vFade * uStudioShadow * 0.20 * shadowStrength;
-      col = mix(col, col * (0.56 + 0.24 * isGlassShadow) + uLiquidColor * isGlassShadow * 0.05, shadowMask);
-    }
+  // Grounded studio shadow & colored floor glow beneath the lamp foot
+  if (uVesselShape != 4) {
+    vec2 lampFootScreen = vec2(uOffset.x, uOffset.y - 0.62 * uScale);
+    vec2 dFoot = (pScreen - lampFootScreen) / max(0.12, uScale);
 
-    vec2 footP = (sp - vec2(0.01, bounds.z - 0.012)) * vec2(1.0, 5.4);
-    float contact = exp(-dot(footP, footP) * 10.0) * uStudioShadow * 0.58 * shadowStrength;
-    vec2 softFootP = (sp - vec2(0.04, bounds.z - 0.02)) * vec2(0.65, 3.4);
-    float softContact = exp(-dot(softFootP, softFootP) * 4.5) * uStudioShadow * 0.22 * shadowStrength;
-    col *= (1.0 - clamp(contact + softContact, 0.0, 0.78));
+    // Tight elliptical contact shadow directly under base
+    float contactR = length(vec2(dFoot.x / (0.28 * uWidthRatio), dFoot.y / 0.055));
+    float contact = exp(-contactR * contactR * 1.45);
+
+    // Soft cast shadow falling subtly to the right
+    vec2 castOff = dFoot - vec2(0.16, -0.01);
+    float castR = length(vec2(castOff.x / (0.48 * uWidthRatio), castOff.y / 0.085));
+    float castSh = exp(-castR * castR * 1.35) * 0.48;
+
+    float shadowAmt = clamp((contact + castSh) * uStudioShadow * (isDark > 0.5 ? 0.72 : 0.34), 0.0, 0.85);
+    col *= (1.0 - shadowAmt);
+
+    // Subtle colored studio floor reflection / bounce glow
+    float glowR = length(vec2(dFoot.x / (0.45 * uWidthRatio), (dFoot.y + 0.04) / 0.14));
+    float glowPool = exp(-glowR * glowR * 1.25) * uFloorReflection * min(1.3, uBottomGlow);
+    vec3 bounceCol = mix(uWaxHot, uLiquidColor, 0.35);
+    col += bounceCol * glowPool * (isDark > 0.5 ? 0.32 : 0.12);
   }
 
   return max(col, vec3(0.0));
 }
 
+// Shade metallic / frosted base and cap
+vec3 shadeMetal(vec3 p, vec3 n, vec3 rd, float isDark) {
+  vec3 viewDir = -rd;
+  vec3 refDir = reflect(rd, n);
+  vec3 env = sampleStudioEnv(refDir, isDark);
+
+  vec3 keyDir = normalize(vec3(0.65, 0.55, 0.52));
+  vec3 rimDir = normalize(vec3(-0.72, 0.35, -0.58));
+  float ndotl = max(dot(n, keyDir), 0.0);
+  float fresnel = pow(1.0 - max(dot(n, viewDir), 0.0), 4.0);
+
+  vec3 albedo = vec3(0.80, 0.82, 0.86);
+  float metalness = 0.90;
+  float rough = 0.25;
+
+  if (uMetalFinish == 0) {
+    // Brushed speckled spun aluminum (Mathmos Astro)
+    float grain = hash12(floor(vec2(atan(p.z, p.x) * 95.0, p.y * 190.0)));
+    float band = sin(p.y * 220.0) * 0.03;
+    albedo = vec3(0.76, 0.78, 0.82) + (grain - 0.5) * 0.14 + band;
+    metalness = 0.86;
+    rough = 0.30 + grain * 0.12;
+  } else if (uMetalFinish == 1) {
+    // Dark gunmetal chrome
+    float brush = sin(p.y * 260.0) * 0.015;
+    albedo = vec3(0.24, 0.25, 0.29) + brush;
+    metalness = 0.96;
+    rough = 0.14;
+  } else if (uMetalFinish == 2) {
+    // Polished rose copper
+    float brush = sin(p.y * 240.0) * 0.012;
+    albedo = vec3(0.92, 0.64, 0.54) + brush;
+    metalness = 0.95;
+    rough = 0.13;
+  } else if (uMetalFinish == 3) {
+    // Matte obsidian anodized
+    albedo = vec3(0.11, 0.11, 0.13);
+    metalness = 0.25;
+    rough = 0.58;
+  } else {
+    // Frosted quartz glass
+    albedo = vec3(0.84, 0.87, 0.93);
+    metalness = 0.10;
+    rough = 0.32;
+  }
+
+  vec3 halfV = normalize(keyDir + viewDir);
+  float specPow = mix(90.0, 12.0, rough);
+  float spec = pow(max(dot(n, halfV), 0.0), specPow) * (1.25 - rough);
+  float rimSpec = pow(max(dot(n, normalize(rimDir + viewDir)), 0.0), 24.0) * 0.55;
+
+  vec3 diff = albedo * (1.0 - metalness * 0.82) * (0.35 + 0.75 * ndotl);
+  vec3 refl = env * mix(vec3(0.08), albedo, metalness) * (0.65 + 0.65 * (1.0 - rough));
+  vec3 col = diff + refl + vec3(1.0, 0.98, 0.95) * (spec + rimSpec) * mix(vec3(1.0), albedo, metalness * 0.55);
+  col += env * fresnel * 0.28;
+
+  // Subtle colored bounce from internal bulb onto lower collar & cap rim
+  float gMin = vesselGlassYMin(uVesselShape);
+  float gMax = vesselGlassYMax(uVesselShape);
+  float nearGlass = exp(-abs(p.y - gMin) * 14.0) + exp(-abs(p.y - gMax) * 18.0) * 0.45;
+  col += mix(uWaxHot, uLiquidColor, 0.3) * nearGlass * uBottomGlow * 0.24;
+
+  // Dark seam groove at glass collar & Astro waist
+  float seam = smoothstep(0.008, 0.0, abs(p.y - gMin)) + smoothstep(0.007, 0.0, abs(p.y - gMax));
+  if (uVesselShape == 0) {
+    seam += smoothstep(0.009, 0.0, abs(p.y + 0.58)) * 0.7;
+  }
+  col *= (1.0 - clamp(seam, 0.0, 0.65));
+
+  return col;
+}
+
+// Fast suspended microbubbles & glitter sparkle inside glass chamber
+float evalMicroParticles(vec3 p, vec3 rd, float gMin, float gMax) {
+  if (uParticles < 0.01) return 0.0;
+  float sparkle = 0.0;
+  // Two lightweight drifting 3D voxel-grid particle layers
+  for (int layer = 0; layer < 2; layer++) {
+    float freq = (layer == 0) ? 24.0 : 38.0;
+    float spd = (layer == 0) ? 0.14 : 0.22;
+    vec3 q = p * freq + vec3(float(layer) * 7.3, -uTime * spd * freq * 0.15, float(layer) * 3.1);
+    vec3 cell = floor(q);
+    vec3 f = fract(q) - 0.5;
+    float rnd = hash31(cell);
+    float threshold = 1.0 - uParticles * (layer == 0 ? 0.16 : 0.24);
+    if (rnd > threshold) {
+      vec3 jitter = vec3(
+        fract(rnd * 17.3) - 0.5,
+        fract(rnd * 31.7) - 0.5,
+        fract(rnd * 53.1) - 0.5
+      ) * 0.58;
+      float d = length(f - jitter);
+      float twinkle = 0.6 + 0.4 * sin(uTime * 3.2 + rnd * 60.0);
+      sparkle += smoothstep(0.16, 0.02, d) * twinkle;
+    }
+  }
+  float verticalFade = smoothstep(gMin, gMin + 0.08, p.y) * smoothstep(gMax, gMax - 0.06, p.y);
+  return sparkle * verticalFade * (0.55 + uParticles * 0.65);
+}
+
 void main() {
-  vec2 aspect = vec2(uResolution.x / max(uResolution.y, 1.0), 1.0);
-  vec2 p = (vUv * 2.0 - 1.0) * aspect;
+  vec2 uv = vUv;
+  vec2 pScreen = (gl_FragCoord.xy - 0.5 * uResolution) / uResolution.y;
+  float isDark = float(uBgMode);
 
-  vec3 bg = renderBackground(p, uVesselShape);
-  vec3 col = bg;
-  float alpha = uTransparentBg == 1 ? 0.0 : 1.0;
+  vec3 bgCol = renderStudioBackground(uv, pScreen);
 
-  // Tightly culled Floor Reflection
-  if (uFloorReflection > 0.01 && uVesselShape != 4) {
-    vec4 bounds = getVesselBounds(uVesselShape);
-    float floorY = bounds.z * uScale + uOffset.y;
-    float maxR = getMaxVesselRadius(uVesselShape) * uScale * 1.38;
-    float distBelow = floorY - p.y;
-    if (distBelow > 0.0 && distBelow < 0.78 * uScale && abs(p.x - uOffset.x) < maxR) {
-      vec2 reflP = vec2(p.x, floorY + distBelow * 1.05) - uOffset;
-      vec4 reflLamp = renderLamp(reflP, uVesselShape, uScale, bg);
-      float fade = exp(-distBelow * 3.8) * uFloorReflection * 0.65;
-      col = mix(col, reflLamp.rgb, reflLamp.a * fade);
-      if (uTransparentBg == 1) {
-        alpha = max(alpha, reflLamp.a * fade);
+  // Camera setup with subtle interactive parallax
+  vec3 ro = vec3(uParallax.x * 0.28, uParallax.y * 0.16, 2.75);
+  vec3 ta = vec3(0.0, 0.0, 0.0);
+  vec3 cw = normalize(ta - ro);
+  vec3 cu = normalize(cross(cw, vec3(0.0, 1.0, 0.0)));
+  vec3 cv = cross(cu, cw);
+  vec3 rd = normalize(pScreen.x * cu + pScreen.y * cv + 1.85 * cw);
+
+  // Transform ray into lamp local space (offset, scale, tilt)
+  vec3 roL = ro - vec3(uOffset.x * 1.45, uOffset.y * 1.45, 0.0);
+  vec3 rdL = rd;
+  mat2 tiltM = rot2(-uTilt);
+  roL.xy = tiltM * roL.xy;
+  rdL.xy = tiltM * rdL.xy;
+  roL /= max(0.12, uScale);
+
+  // Fast analytical bounding-cylinder rejection for background pixels
+  float boundR = (uVesselShape == 4 ? 0.56 : 0.34) * uWidthRatio + 0.05;
+  vec2 cylHit = intersectBoundingCylinder(roL, rdL, boundR);
+
+  vec3 color = bgCol;
+  float alpha = (uTransparentBg == 1) ? 0.0 : 1.0;
+
+  if (cylHit.y > 0.0 && cylHit.x < cylHit.y) {
+    float tStart = max(0.05, cylHit.x);
+    float tEnd = min(32.0, cylHit.y);
+    float yA = roL.y + rdL.y * tStart;
+    float yB = roL.y + rdL.y * tEnd;
+    if (max(yA, yB) >= -0.96 && min(yA, yB) <= 0.96) {
+
+    if (uVesselShape == 4) {
+      // Free-floating fluid metaballs mode (no vessel shell)
+      float t = tStart;
+      bool hitWax = false;
+      for (int i = 0; i < 40; i++) {
+        vec3 p = roL + rdL * t;
+        float d = mapWax(p);
+        if (d < 0.002) {
+          hitWax = true;
+          break;
+        }
+        t += max(d * 0.85, 0.006);
+        if (t > tEnd) break;
+      }
+      if (hitWax) {
+        vec3 p = roL + rdL * t;
+        vec3 n = calcWaxNormal(p);
+        float hNorm = clamp((p.y + 0.55) / 1.1, 0.0, 1.0);
+        vec3 waxCol = mix(uWaxHot, uWaxCool, smoothstep(0.05, 0.88, hNorm));
+        vec3 keyDir = normalize(vec3(0.55, 0.65, 0.52));
+        float diff = max(dot(n, keyDir), 0.0);
+        float ndotv = clamp(abs(dot(n, -rdL)), 0.0, 1.0);
+        float spec = pow(max(dot(n, normalize(keyDir - rdL)), 0.0), 42.0);
+        float sss = (0.35 + 0.65 * pow(ndotv, 1.1)) * uSubsurface;
+        vec3 lit = waxCol * (0.38 + 0.68 * diff + sss * 0.72) + vec3(1.0) * spec * 0.48;
+        lit += uWaxHot * pow(1.0 - hNorm, 2.2) * uBottomGlow * 0.55;
+        color = lit;
+        alpha = 1.0;
+      }
+    } else {
+      // Raymarch outer lamp silhouette within tight bounding cylinder
+      float t = tStart;
+      vec2 hit = vec2(1e4, 0.0);
+      bool hitOuter = false;
+      for (int i = 0; i < 36; i++) {
+        vec3 p = roL + rdL * t;
+        if (p.y > 0.96 || p.y < -0.96) {
+          t += 0.035;
+          if (t > tEnd) break;
+          continue;
+        }
+        hit = mapLampOuter(p);
+        if (hit.x < 0.0018) {
+          hitOuter = true;
+          break;
+        }
+        t += max(hit.x * 0.85, 0.005);
+        if (t > tEnd) break;
+      }
+
+      if (hitOuter) {
+        vec3 pOut = roL + rdL * t;
+        vec3 nOut = calcOuterNormal(pOut);
+        alpha = 1.0;
+
+        if (hit.y < 1.5) {
+          // Metallic / frosted base & top cap
+          color = shadeMetal(pOut, nOut, rdL, isDark);
+        } else {
+          // Optical Glass Vessel: refract ray into colored liquid + 3D wax metaballs
+          float gMin = vesselGlassYMin(uVesselShape);
+          float gMax = vesselGlassYMax(uVesselShape);
+          float gSpan = gMax - gMin;
+
+          float ior = mix(1.04, 1.24, uGlassRefraction);
+          vec3 rdIn = refract(rdL, nOut, 1.0 / ior);
+          if (length(rdIn) < 0.01) rdIn = rdL;
+          vec3 roIn = pOut + rdIn * 0.008;
+
+          // Trace wax metaballs & gather subtle microbubbles inside chamber
+          float tIn = 0.0;
+          bool hitWax = false;
+          float maxInDist = boundR * 2.1;
+          float particleAcc = 0.0;
+
+          for (int j = 0; j < 34; j++) {
+            vec3 pIn = roIn + rdIn * tIn;
+            if (pIn.y < gMin - 0.02 || pIn.y > gMax + 0.02 || tIn > maxInDist) break;
+
+            float wallR = vesselRadius(uVesselShape, clamp(pIn.y, gMin, gMax));
+            if (length(pIn.xz) > wallR + 0.018 && tIn > 0.03) break;
+
+            float dW = mapWax(pIn);
+            if (dW < 0.0025) {
+              hitWax = true;
+              break;
+            }
+
+            if (uParticles > 0.01 && j < 18 && (j & 1) == 0) {
+              particleAcc += evalMicroParticles(pIn, rdIn, gMin, gMax) * 0.28;
+            }
+
+            tIn += clamp(dW * 0.82, 0.009, 0.045);
+          }
+
+          // Refracted background behind the glass
+          vec2 refrUv = uv + nOut.xy * (0.045 * uGlassRefraction);
+          vec2 refrScreen = pScreen + nOut.xy * (0.065 * uGlassRefraction);
+          vec3 behindCol = (uTransparentBg == 1)
+            ? mix(uLiquidColor * 0.25, vec3(0.08), 0.3)
+            : renderStudioBackground(clamp(refrUv, 0.0, 1.0), refrScreen);
+
+          float heightT = clamp((pOut.y - gMin) / gSpan, 0.0, 1.0);
+          float ndotv = clamp(abs(dot(nOut, -rdL)), 0.0, 1.0);
+          float fresnel = pow(1.0 - ndotv, 3.4);
+
+          // Beer-Lambert optical liquid tint
+          float pathDepth = mix(0.65, 1.65, 1.0 - ndotv);
+          float liqStrength = clamp(uLiquidDensity * pathDepth, 0.0, 1.45);
+          vec3 transmittance = exp(-max(vec3(0.04), (1.0 - uLiquidColor) * 2.45 + 0.22) * liqStrength * 1.15);
+          vec3 liquidBase = behindCol * transmittance + uLiquidColor * (1.0 - transmittance) * (0.58 + 0.28 * (1.0 - heightT));
+
+          // Warm upward heater bulb glow inside lower liquid
+          float bulbHeat = pow(clamp(1.0 - heightT, 0.0, 1.0), 2.55) * uBottomGlow;
+          vec3 hotCoreCol = mix(uWaxHot, vec3(1.0, 0.95, 0.94), 0.42);
+          liquidBase += hotCoreCol * bulbHeat * (0.42 + 0.24 * ndotv);
+
+          vec3 interiorCol = liquidBase;
+
+          if (hitWax) {
+            vec3 pWax = roIn + rdIn * tIn;
+            vec3 nWax = calcWaxNormal(pWax);
+            float wHeight = clamp((pWax.y - gMin) / gSpan, 0.0, 1.0);
+
+            vec3 waxAlbedo = mix(uWaxHot, uWaxCool, smoothstep(0.06, 0.84, wHeight));
+            vec3 keyDir = normalize(vec3(0.55, 0.62, 0.56));
+            float diff = max(dot(nWax, keyDir), 0.0);
+            float wNdotV = clamp(abs(dot(nWax, -rdIn)), 0.0, 1.0);
+            float bottomUp = clamp(-nWax.y * 0.55 + 0.5, 0.0, 1.0);
+
+            // Backlit translucent molten wax shading
+            float coreGlow = mix(0.32, 1.0, pow(wNdotV, 1.15)) * uSubsurface;
+            float baseIncandescence = pow(clamp(1.0 - wHeight, 0.0, 1.0), 2.4) * uBottomGlow;
+
+            vec3 waxLit = waxAlbedo * (0.34 + 0.62 * diff + coreGlow * 0.72)
+                        + hotCoreCol * baseIncandescence * (0.48 + 0.55 * bottomUp);
+
+            // Subtle glossy wax highlight
+            float wSpec = pow(max(dot(nWax, normalize(keyDir - rdIn)), 0.0), 34.0);
+            waxLit += vec3(1.0, 0.97, 0.95) * wSpec * 0.22;
+
+            // Attenuate wax gently by liquid in front of it (tIn)
+            float frontLiquid = clamp(tIn * 2.2 * uLiquidDensity, 0.0, 0.82);
+            vec3 frontTrans = exp(-max(vec3(0.03), (1.0 - uLiquidColor) * 2.1 + 0.15) * frontLiquid);
+            interiorCol = waxLit * frontTrans + uLiquidColor * (1.0 - frontTrans) * 0.35;
+          }
+
+          // Add glittering suspended microbubbles
+          vec3 sparkleCol = mix(vec3(1.0), uWaxHot, 0.35);
+          interiorCol += sparkleCol * clamp(particleAcc, 0.0, 1.25);
+
+          // Crisp borosilicate outer glass speculars & softbox reflections
+          vec3 envRefl = sampleStudioEnv(reflect(rdL, nOut), isDark);
+          float glassSpec = (0.14 + 0.86 * fresnel) * (0.45 + 0.72 * uGlassRefraction);
+          color = interiorCol + envRefl * glassSpec * (isDark > 0.5 ? 0.58 : 0.44);
+
+          // Crisp refractive glass edge rim line
+          float glassEdge = pow(1.0 - ndotv, 5.5) * (0.35 + 0.45 * uGlassRefraction);
+          color += mix(uLiquidColor, vec3(1.0), 0.7) * glassEdge * 0.32;
+
+          // Subtle top liquid meniscus highlight
+          float meniscus = smoothstep(0.955, 0.992, heightT) * smoothstep(1.0, 0.992, heightT);
+          color += vec3(0.28) * meniscus;
+        }
       }
     }
-  }
-
-  // Primary Hero Lamp
-  vec4 hero = renderLamp(p - uOffset, uVesselShape, uScale, bg);
-  if (hero.a > 0.001) {
-    col = mix(col, hero.rgb, hero.a);
-    if (uTransparentBg == 1) alpha = max(alpha, hero.a);
-  }
-
-  // Analytic Optical Bloom (zero FBO / texture fetches, silky smooth glow)
-  if (uBloom > 0.005) {
-    vec4 bounds = getVesselBounds(uVesselShape == 4 ? 0 : uVesselShape);
-    vec2 lp = (p - uOffset) / max(uScale, 0.1);
-    float cy = clamp(lp.y, bounds.x, bounds.y);
-    float dGlass = length(vec2(lp.x, lp.y - cy));
-    float aura = exp(-dGlass * 3.6) * 0.55 + exp(-dGlass * 8.5) * 0.45;
-    vec3 bloomCol = mix(uWaxCool, uWaxHot, clamp(1.0 - (cy - bounds.x) / max(bounds.y - bounds.x, 0.01), 0.0, 1.0));
-    bloomCol = mix(bloomCol, uLiquidColor, 0.25);
-    float modeAtten = uBgMode == 0 ? 0.32 : 0.72;
-    col += bloomCol * aura * uBloom * (0.45 + 0.35 * uBottomGlow) * modeAtten;
-    if (uTransparentBg == 1) {
-      alpha = max(alpha, clamp(aura * uBloom * 0.45, 0.0, 1.0));
     }
   }
 
-  // Inline Contrast, Saturation & ACES Filmic Tone Mapping
-  col = (col - 0.5) * uContrast + 0.5;
-  float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
-  col = max(mix(vec3(luma), col, uSaturation), vec3(0.0));
-  col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);
-
-  // Subtle Photographic Film Grain
-  if (uFilmGrain > 0.005) {
-    float grain = hash12(gl_FragCoord.xy + fract(uTime * 17.3) * 1000.0) - 0.5;
-    col += grain * 0.12 * uFilmGrain;
+  // Analytic soft bloom halo around the glowing glass vessel (zero FBO cost)
+  if (uBloom > 0.01 && uTransparentBg == 0) {
+    vec2 lampCenter = vec2(uOffset.x, uOffset.y + 0.08 * uScale);
+    vec2 dHalo = (pScreen - lampCenter) / max(0.12, uScale);
+    float haloDist = length(vec2(dHalo.x / (0.28 * uWidthRatio), dHalo.y / 0.52));
+    float halo = exp(-haloDist * haloDist * 1.45) * uBloom * (0.45 + 0.45 * uBottomGlow);
+    vec3 haloCol = mix(uWaxHot, uWaxCool, 0.35);
+    color += haloCol * halo * (isDark > 0.5 ? 0.42 : 0.16);
   }
 
-  fragColor = vec4(clamp(col, 0.0, 1.0), uTransparentBg == 1 ? clamp(alpha, 0.0, 1.0) : 1.0);
+  // Color grading: saturation & contrast
+  float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+  color = mix(vec3(luma), color, uSaturation);
+  color = (color - 0.5) * uContrast + 0.5;
+  color = max(color, vec3(0.0));
+
+  // Subtle photographic film grain
+  if (uFilmGrain > 0.002) {
+    float g = (hash12(gl_FragCoord.xy + fract(uTime * 17.3) * 100.0) - 0.5) * uFilmGrain * 0.22;
+    color = clamp(color + g, 0.0, 1.0);
+  }
+
+  // Smooth Filmic-like highlight roll-off
+  color = color / (1.0 + color * 0.18);
+  color = clamp(color, 0.0, 1.0);
+
+  fragColor = vec4(color, alpha);
 }
 `;

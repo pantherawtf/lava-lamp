@@ -76,6 +76,51 @@ export class LavaPhysics {
     }
   }
 
+  /**
+   * Pushes the molten wax cleanly to the opposite side (horizontally and vertically)
+   * of where it is currently positioned, reversing convection phase so it glides across.
+   */
+  public stirOpposite(activeCount: number): void {
+    const count = Math.max(1, Math.min(activeCount, this.blobs.length));
+    let avgX = 0;
+    let avgY = 0;
+    let avgZ = 0;
+    for (let i = 0; i < count; i++) {
+      avgX += this.blobs[i].x;
+      avgY += this.blobs[i].y;
+      avgZ += this.blobs[i].z;
+    }
+    avgX /= count;
+    avgY /= count;
+    avgZ /= count;
+
+    for (let i = 0; i < this.blobs.length; i++) {
+      const b = this.blobs[i];
+
+      // Determine current horizontal side (fallback to cluster side, then alternating if dead-center)
+      const refX =
+        Math.abs(b.x) > 0.012 ? b.x : Math.abs(avgX) > 0.008 ? avgX : i % 2 === 0 ? 0.06 : -0.06;
+      const refZ =
+        Math.abs(b.z) > 0.012 ? b.z : Math.abs(avgZ) > 0.008 ? avgZ : i % 2 === 0 ? -0.05 : 0.05;
+      const refY = Math.abs(b.y) > 0.04 ? b.y : avgY;
+
+      const oppX = refX >= 0 ? -1 : 1;
+      const oppZ = refZ >= 0 ? -1 : 1;
+      const oppY = refY >= 0 ? -1 : 1;
+
+      // Surge toward the opposite side of the glass chamber
+      b.vx = b.vx * 0.15 + oppX * (0.48 + Math.abs(b.x) * 1.6);
+      b.vz = b.vz * 0.15 + oppZ * (0.32 + Math.abs(b.z) * 1.2);
+      b.vy = b.vy * 0.15 + oppY * (0.58 + Math.abs(b.y) * 0.9);
+
+      // Invert thermal buoyancy so rising drops cool & sink, and pooled drops heat & rise
+      b.temp = oppY > 0 ? Math.min(1.0, Math.max(b.temp, 0.88)) : Math.max(0.0, Math.min(b.temp, 0.12));
+
+      // Reverse convection swirl phase so ongoing currents reinforce the opposite sweep
+      b.phase += Math.PI;
+    }
+  }
+
   public step(dt: number, speed: number, activeCount: number, waxScale: number): void {
     const clampedDt = Math.min(dt, 0.05) * Math.max(0, speed);
     this.time += clampedDt;

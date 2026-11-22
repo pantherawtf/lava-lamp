@@ -387,8 +387,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 <SliderControl
                   label="Escala"
                   value={config.scale}
-                  min={0.55}
-                  max={1.45}
+                  min={0.25}
+                  max={1.0}
                   step={0.01}
                   displayValue={`${Math.round(config.scale * 100)}%`}
                   onChange={(v) => onUpdate('scale', v)}

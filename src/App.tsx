@@ -105,12 +105,7 @@ export default function App() {
   }, []);
 
   const handleStirFluid = useCallback(() => {
-    physicsRef.current.applyImpulse(
-      (Math.random() - 0.5) * 0.5,
-      -0.25,
-      (Math.random() - 0.5) * 0.7,
-      0.55
-    );
+    physicsRef.current.stirOpposite(configRef.current.blobCount);
   }, []);
 
   const handleUndo = useCallback(() => {

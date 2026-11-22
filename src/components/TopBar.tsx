@@ -1,6 +1,7 @@
 import React from 'react';
 import { Download, Moon, Sun } from 'lucide-react';
 import type { BackgroundMode } from '../types/lava';
+import { StudioRadio } from './StudioRadio';
 
 interface TopBarProps {
   bgMode: BackgroundMode;
@@ -16,9 +17,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   const isDark = bgMode === 'dark';
 
   return (
-    <header className="pointer-events-none absolute top-0 left-0 right-0 z-20 h-16 px-6 flex items-center justify-between gap-6">
-      {/* Left: Brand wordmark + quick Light/Dark background toggle */}
-      <div className="pointer-events-auto flex items-center gap-4 shrink-0">
+    <header className="pointer-events-none absolute top-0 left-0 right-0 z-20 h-16 px-6 flex items-center justify-between gap-4">
+      {/* Left: Brand wordmark + quick Light/Dark toggle + collapsible Studio Radio */}
+      <div className="pointer-events-auto flex items-center gap-3 shrink-0">
         <a
           href="#stage"
           onClick={(e) => e.preventDefault()}
@@ -34,7 +35,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           aria-label={isDark ? 'Fundo escuro ativo. Alternar para fundo claro' : 'Fundo claro ativo. Alternar para fundo escuro'}
           title={isDark ? 'Mudar para fundo claro' : 'Mudar para fundo escuro'}
           onClick={onToggleBgMode}
-          className="group inline-flex items-center gap-2 pl-1.5 pr-3 py-1 rounded-full bg-white/82 dark:bg-[#141419]/85 backdrop-blur-md border border-black/[0.09] dark:border-white/[0.11] shadow-[0_2px_10px_rgba(0,0,0,0.06)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.35)] hover:border-black/[0.18] dark:hover:border-white/[0.2] transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5C35]"
+          className="group inline-flex items-center gap-2 pl-1.5 pr-3 h-8 rounded-full bg-white/82 dark:bg-[#141419]/85 backdrop-blur-md border border-black/[0.09] dark:border-white/[0.11] shadow-[0_2px_10px_rgba(0,0,0,0.06)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.35)] hover:border-black/[0.18] dark:hover:border-white/[0.2] transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5C35]"
         >
           <span
             aria-hidden="true"
@@ -56,6 +57,8 @@ export const TopBar: React.FC<TopBarProps> = ({
             {isDark ? 'Escuro' : 'Claro'}
           </span>
         </button>
+
+        <StudioRadio />
       </div>
 
       {/* Right: Single primary CTA */}
