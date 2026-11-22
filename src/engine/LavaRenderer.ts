@@ -13,6 +13,7 @@ export interface TransientMotion {
   offsetX: number;
   offsetY: number;
   tilt: number;
+  scaleMultiplier?: number;
   shakeGlitter: [number, number, number, number];
 }
 
@@ -169,7 +170,7 @@ export class LavaRenderer {
 
     gl.uniform1i(u.uVesselShape, VESSEL_SHAPE_MAP[config.vesselShape] ?? 0);
     gl.uniform1i(u.uMetalFinish, METAL_FINISH_MAP[config.metalFinish] ?? 0);
-    gl.uniform1f(u.uScale, config.scale * 0.7);
+    gl.uniform1f(u.uScale, config.scale * 0.7 * (transientMotion?.scaleMultiplier ?? 1));
     gl.uniform1f(u.uWidthRatio, config.widthRatio);
     gl.uniform1f(u.uTilt, config.tilt + (transientMotion?.tilt ?? 0));
     gl.uniform2f(

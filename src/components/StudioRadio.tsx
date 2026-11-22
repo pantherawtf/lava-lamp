@@ -84,10 +84,10 @@ export const StudioRadio: React.FC = () => {
     <div className="relative flex items-center">
       <div
         className={`flex items-center rounded-full bg-white/82 dark:bg-[#141419]/85 backdrop-blur-md border border-black/[0.09] dark:border-white/[0.11] shadow-[0_2px_10px_rgba(0,0,0,0.06)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.35)] transition-all duration-200 ${
-          isOpen ? 'pr-3' : ''
+          isOpen ? 'md:pr-3' : ''
         }`}
       >
-        {/* Compact Radio Toggle Button */}
+        {/* Compact Radio Toggle Button (>=44px on mobile, 32px on desktop) */}
         <button
           type="button"
           onClick={() => setIsOpen((o) => !o)}
@@ -100,18 +100,18 @@ export const StudioRadio: React.FC = () => {
                 ? `Rádio tocando: ${track.title}`
                 : 'Rádio de estúdio (estilo Sade)'
           }
-          className={`h-8 w-8 inline-flex items-center justify-center rounded-full transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5C35] ${
+          className={`h-11 w-11 md:h-8 md:w-8 inline-flex items-center justify-center rounded-full transition-all active:scale-95 shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5C35] ${
             isPlaying
               ? 'text-[#FF5C35]'
-              : 'text-[#4A4A58] dark:text-[#C4C4D2] hover:text-[#14141A] dark:hover:text-white'
+              : 'text-[#4A4A58] dark:text-[#C4C4D2] md:hover:text-[#14141A] md:dark:hover:text-white active:bg-black/[0.06] dark:active:bg-white/[0.08]'
           }`}
         >
-          <Radio className="w-3.5 h-3.5" aria-hidden="true" />
+          <Radio className="w-4 h-4 md:w-3.5 md:h-3.5" aria-hidden="true" />
         </button>
 
-        {/* Expandable Inline Mini-Radio Controls (Desktop/Tablet) */}
+        {/* Expandable Inline Mini-Radio Controls (Desktop/Tablet >= md) */}
         {isOpen && (
-          <div className="hidden sm:flex items-center gap-1.5 pl-0.5">
+          <div className="hidden md:flex items-center gap-1.5 pl-0.5">
             <div className="w-px h-4 bg-black/[0.09] dark:bg-white/[0.1]" aria-hidden="true" />
 
             <button
@@ -173,57 +173,60 @@ export const StudioRadio: React.FC = () => {
         )}
       </div>
 
-      {/* Compact Popover Fallback for Small Mobile Viewports */}
+      {/* Touch-Friendly Popover for Mobile Viewports (< md) */}
       {isOpen && (
-        <div className="sm:hidden absolute left-0 top-10 z-30 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-white/95 dark:bg-[#141419]/95 backdrop-blur-md border border-black/[0.1] dark:border-white/[0.12] shadow-[0_8px_24px_rgba(0,0,0,0.16)] dark:shadow-[0_8px_28px_rgba(0,0,0,0.55)]">
-          <button
-            type="button"
-            onClick={handleTogglePlay}
-            aria-label={isPlaying ? 'Pausar rádio' : 'Tocar rádio'}
-            className="h-7 w-7 inline-flex items-center justify-center rounded-full text-[#14141A] dark:text-[#F4F4F6] hover:bg-black/[0.07] dark:hover:bg-white/[0.1] shrink-0 cursor-pointer"
-          >
-            {isPlaying ? (
-              <Pause className="w-3.5 h-3.5 fill-current" aria-hidden="true" />
-            ) : (
-              <Play className="w-3.5 h-3.5 fill-current translate-x-[0.5px]" aria-hidden="true" />
-            )}
-          </button>
+        <div className="md:hidden fixed left-4 right-4 top-[calc(env(safe-area-inset-top)+4.25rem)] z-30 mx-auto max-w-[360px] flex items-center justify-between gap-1.5 px-2 py-1 rounded-2xl bg-white/95 dark:bg-[#141419]/95 backdrop-blur-md border border-black/[0.1] dark:border-white/[0.12] shadow-[0_12px_32px_rgba(0,0,0,0.2)] dark:shadow-[0_12px_36px_rgba(0,0,0,0.65)]">
+          <div className="flex items-center gap-0.5 min-w-0">
+            <button
+              type="button"
+              onClick={handleTogglePlay}
+              aria-label={isPlaying ? 'Pausar rádio' : 'Tocar rádio'}
+              className="h-11 w-11 inline-flex items-center justify-center rounded-xl text-[#14141A] dark:text-[#F4F4F6] active:bg-black/[0.08] dark:active:bg-white/[0.12] active:scale-95 transition-all shrink-0 cursor-pointer"
+            >
+              {isPlaying ? (
+                <Pause className="w-4 h-4 fill-current" aria-hidden="true" />
+              ) : (
+                <Play className="w-4 h-4 fill-current translate-x-[0.5px]" aria-hidden="true" />
+              )}
+            </button>
 
-          <button
-            type="button"
-            onClick={handleNext}
-            aria-label="Próxima faixa"
-            className="h-7 w-7 inline-flex items-center justify-center rounded-full text-[#5A5A6A] dark:text-[#B4B4C4] hover:text-[#14141A] dark:hover:text-white shrink-0 cursor-pointer"
-          >
-            <SkipForward className="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
+            <button
+              type="button"
+              onClick={handleNext}
+              aria-label="Próxima faixa"
+              className="h-11 w-11 inline-flex items-center justify-center rounded-xl text-[#5A5A6A] dark:text-[#B4B4C4] active:bg-black/[0.08] dark:active:bg-white/[0.12] active:scale-95 transition-all shrink-0 cursor-pointer"
+            >
+              <SkipForward className="w-4 h-4" aria-hidden="true" />
+            </button>
 
-          <span className="text-[11.5px] font-medium text-[#2A2A36] dark:text-[#DCDCE6] max-w-[96px] truncate">
-            {track.title}
-          </span>
+            <span className="text-[12.5px] font-medium text-[#2A2A36] dark:text-[#DCDCE6] truncate px-1">
+              {track.title}
+            </span>
+          </div>
 
-          <div className="w-px h-4 bg-black/[0.09] dark:bg-white/[0.1]" aria-hidden="true" />
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={handleToggleMute}
+              aria-label={isMuted ? 'Ativar som' : 'Silenciar'}
+              className="h-11 w-11 inline-flex items-center justify-center rounded-xl text-[#5A5A6A] dark:text-[#B4B4C4] active:bg-black/[0.08] dark:active:bg-white/[0.12] active:scale-95 transition-all shrink-0 cursor-pointer"
+            >
+              <VolumeIcon className="w-4 h-4" aria-hidden="true" />
+            </button>
 
-          <button
-            type="button"
-            onClick={handleToggleMute}
-            aria-label={isMuted ? 'Ativar som' : 'Silenciar'}
-            className="h-7 w-7 inline-flex items-center justify-center rounded-full text-[#5A5A6A] dark:text-[#B4B4C4] shrink-0 cursor-pointer"
-          >
-            <VolumeIcon className="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
-
-          <div className="w-16 flex items-center shrink-0">
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={isMuted ? 0 : volume}
-              onChange={handleVolumeChange}
-              aria-label="Volume do rádio"
-              className="studio-slider"
-            />
+            <div className="w-20 pr-2 flex items-center shrink-0">
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={isMuted ? 0 : volume}
+                onChange={handleVolumeChange}
+                onTouchMove={(e) => e.stopPropagation()}
+                aria-label="Volume do rádio"
+                className="studio-slider studio-slider-compact"
+              />
+            </div>
           </div>
         </div>
       )}

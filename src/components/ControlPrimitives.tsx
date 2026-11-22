@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 interface SliderControlProps {
   label: string;
@@ -21,30 +21,63 @@ export const SliderControl: React.FC<SliderControlProps> = ({
   onChange,
   onCommit,
 }) => {
+  const [isDragging, setIsDragging] = useState(false);
+
   const formatted =
     displayValue ??
     (step >= 1 ? Math.round(value).toString() : value.toFixed(step < 0.05 ? 2 : 1));
 
+  const span = Math.max(1e-6, max - min);
+  const pct = Math.max(0, Math.min(100, ((value - min) / span) * 100));
+  const clampedBubblePct = Math.max(10, Math.min(90, pct));
+
+  const finishDrag = () => {
+    setIsDragging(false);
+    onCommit?.();
+  };
+
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between gap-2 text-[12px]">
+    <div className="space-y-0.5 md:space-y-1">
+      <div className="flex items-center justify-between gap-2 text-[13px] md:text-[12px]">
         <span className="text-[#3C3C48] dark:text-[#B6B6C2] font-medium truncate">{label}</span>
-        <span className="font-mono-num text-[11px] text-[#6B6B7A] dark:text-[#7D7D8C] shrink-0">
+        <span
+          className={`font-mono-num text-[12px] md:text-[11px] shrink-0 transition-colors ${
+            isDragging
+              ? 'text-[#FF5C35] font-semibold'
+              : 'text-[#6B6B7A] dark:text-[#7D7D8C]'
+          }`}
+        >
           {formatted}
         </span>
       </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-        onPointerUp={onCommit}
-        onKeyUp={onCommit}
-        aria-label={label}
-        className="studio-slider"
-      />
+      <div className="relative flex items-center">
+        {/* Live floating thumb value bubble visible while dragging on mobile */}
+        {isDragging && (
+          <div
+            aria-hidden="true"
+            style={{ left: `${clampedBubblePct}%` }}
+            className="md:hidden pointer-events-none absolute -top-7 -translate-x-1/2 z-10 px-2 py-0.5 rounded-md bg-[#14141A] dark:bg-[#F4F4F6] text-white dark:text-[#14141A] font-mono-num text-[11px] font-medium shadow-md whitespace-nowrap"
+          >
+            {formatted}
+          </div>
+        )}
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(parseFloat(e.target.value))}
+          onPointerDown={() => setIsDragging(true)}
+          onPointerUp={finishDrag}
+          onPointerCancel={finishDrag}
+          onBlur={() => setIsDragging(false)}
+          onTouchMove={(e) => e.stopPropagation()}
+          onKeyUp={onCommit}
+          aria-label={label}
+          className="studio-slider"
+        />
+      </div>
     </div>
   );
 };
@@ -57,16 +90,16 @@ interface ColorControlProps {
 
 export const ColorControl: React.FC<ColorControlProps> = ({ label, value, onChange }) => {
   return (
-    <div className="flex items-center justify-between gap-3 py-1">
-      <span className="text-[12px] text-[#3C3C48] dark:text-[#B6B6C2] font-medium truncate">
+    <label className="flex items-center justify-between gap-3 min-h-[44px] md:min-h-0 py-1 cursor-pointer group active:opacity-80 md:active:opacity-100 transition-opacity">
+      <span className="text-[13px] md:text-[12px] text-[#3C3C48] dark:text-[#B6B6C2] font-medium truncate">
         {label}
       </span>
-      <label className="flex items-center gap-2 cursor-pointer group shrink-0">
-        <span className="font-mono-num text-[11px] text-[#6B6B7A] dark:text-[#7D7D8C] group-hover:text-[#14141A] dark:group-hover:text-[#D4D4DC] transition-colors">
+      <span className="flex items-center gap-2.5 md:gap-2 shrink-0">
+        <span className="font-mono-num text-[12px] md:text-[11px] text-[#6B6B7A] dark:text-[#7D7D8C] md:group-hover:text-[#14141A] md:dark:group-hover:text-[#D4D4DC] transition-colors">
           {value.toUpperCase()}
         </span>
         <span
-          className="relative w-6 h-6 rounded-md border border-black/15 dark:border-white/15 overflow-hidden shrink-0 transition-transform duration-150 group-hover:scale-105"
+          className="relative w-9 h-9 md:w-6 md:h-6 rounded-lg md:rounded-md border border-black/15 dark:border-white/15 overflow-hidden shrink-0 transition-transform duration-150 active:scale-95 md:group-hover:scale-105"
           style={{ backgroundColor: value }}
         >
           <input
@@ -77,8 +110,8 @@ export const ColorControl: React.FC<ColorControlProps> = ({ label, value, onChan
             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
           />
         </span>
-      </label>
-    </div>
+      </span>
+    </label>
   );
 };
 
@@ -116,7 +149,9 @@ export function SegmentedControl<T extends string>({
   return (
     <div className="space-y-1.5">
       {label && (
-        <div className="text-[12px] text-[#3C3C48] dark:text-[#B6B6C2] font-medium">{label}</div>
+        <div className="text-[13px] md:text-[12px] text-[#3C3C48] dark:text-[#B6B6C2] font-medium">
+          {label}
+        </div>
       )}
       <div
         className={`${columns ? `grid ${gridCols}` : 'flex'} gap-1 p-1 rounded-lg bg-[#EAEBF0] dark:bg-[#0A0A0C] border border-black/[0.06] dark:border-white/[0.06]`}
@@ -128,12 +163,12 @@ export function SegmentedControl<T extends string>({
               key={opt.value}
               type="button"
               onClick={() => onChange(opt.value)}
-              className={`px-2 py-1.5 text-[11.5px] font-medium rounded-md transition-colors duration-150 whitespace-nowrap truncate cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35] ${
+              className={`min-h-[44px] md:min-h-0 px-2 py-2 md:py-1.5 text-[12px] md:text-[11.5px] font-medium rounded-md transition-all duration-150 whitespace-nowrap truncate cursor-pointer active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35] ${
                 columns ? '' : 'flex-1'
               } ${
                 active
                   ? 'bg-white dark:bg-[#222229] text-[#14141A] dark:text-[#F4F4F6] shadow-xs dark:shadow-none'
-                  : 'text-[#626272] dark:text-[#848494] hover:text-[#14141A] dark:hover:text-[#D4D4DE]'
+                  : 'text-[#626272] dark:text-[#848494] md:hover:text-[#14141A] md:dark:hover:text-[#D4D4DE] active:bg-black/[0.05] dark:active:bg-white/[0.06]'
               }`}
             >
               {opt.label}
@@ -153,10 +188,10 @@ interface SectionBlockProps {
 export const SectionBlock: React.FC<SectionBlockProps> = ({ title, children }) => {
   return (
     <section className="py-4 border-b border-black/[0.07] dark:border-white/[0.06] last:border-b-0 space-y-3.5">
-      <h3 className="text-[13px] font-semibold tracking-tight text-[#14141A] dark:text-[#F4F4F6]">
+      <h3 className="text-[13.5px] md:text-[13px] font-semibold tracking-tight text-[#14141A] dark:text-[#F4F4F6]">
         {title}
       </h3>
-      <div className="space-y-3">{children}</div>
+      <div className="space-y-3.5 md:space-y-3">{children}</div>
     </section>
   );
 };

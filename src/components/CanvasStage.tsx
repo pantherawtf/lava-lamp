@@ -11,6 +11,7 @@ import {
 import { LavaRenderer, type TransientMotion } from '../engine/LavaRenderer';
 import { LavaPhysics, MAX_BLOBS } from '../engine/physics';
 import type { LavaConfig } from '../types/lava';
+import type { MobileSheetState } from './MobileBottomSheet';
 
 interface CanvasStageProps {
   config: LavaConfig;
@@ -26,7 +27,10 @@ interface CanvasStageProps {
   physicsRef: React.MutableRefObject<LavaPhysics>;
   parallaxRef: React.MutableRefObject<[number, number]>;
   viewportRatioRef: React.MutableRefObject<number>;
-  onToggleMobileInspector?: () => void;
+  isMobileLayout: boolean;
+  isMobileLandscape: boolean;
+  mobileSheetState: MobileSheetState;
+  onOpenMobileSheet?: () => void;
 }
 
 export const CanvasStage: React.FC<CanvasStageProps> = ({
@@ -43,13 +47,19 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
   physicsRef,
   parallaxRef,
   viewportRatioRef,
-  onToggleMobileInspector,
+  isMobileLayout,
+  isMobileLandscape,
+  mobileSheetState,
+  onOpenMobileSheet,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<LavaRenderer | null>(null);
 
   const configRef = useRef<LavaConfig>(config);
   const isPlayingRef = useRef<boolean>(isPlaying);
+  const isMobileLayoutRef = useRef<boolean>(isMobileLayout);
+  const isMobileLandscapeRef = useRef<boolean>(isMobileLandscape);
+  const mobileSheetStateRef = useRef<MobileSheetState>(mobileSheetState);
 
   const [webglError, setWebglError] = useState<string | null>(null);
 
@@ -108,10 +118,17 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
     shakeCooldown: 0,
   });
 
+  // Smoothly interpolated mobile framing (auto width/height fit + sheet top-half lift)
+  const framingRef = useRef<{ offsetY: number; scaleMul: number }>({
+    offsetY: 0,
+    scaleMul: 1,
+  });
+
   const transientMotionRef = useRef<TransientMotion>({
     offsetX: 0,
     offsetY: 0,
     tilt: 0,
+    scaleMultiplier: 1,
     shakeGlitter: [0, 0, 0, 0],
   });
 
@@ -124,6 +141,18 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
+
+  useEffect(() => {
+    isMobileLayoutRef.current = isMobileLayout;
+  }, [isMobileLayout]);
+
+  useEffect(() => {
+    isMobileLandscapeRef.current = isMobileLandscape;
+  }, [isMobileLandscape]);
+
+  useEffect(() => {
+    mobileSheetStateRef.current = mobileSheetState;
+  }, [mobileSheetState]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -208,7 +237,8 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
 
       const clientW = Math.max(1, canvas.clientWidth);
       const clientH = Math.max(1, canvas.clientHeight);
-      viewportRatioRef.current = clientW / clientH;
+      const aspect = clientW / clientH;
+      viewportRatioRef.current = aspect;
 
       const baseDpr = Math.min(window.devicePixelRatio || 1, 2.0);
       let targetW = Math.floor(clientW * baseDpr * adaptiveScale);
@@ -225,6 +255,50 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
       if (resized) {
         canvas.width = targetW;
         canvas.height = targetH;
+      }
+
+      // Compute mobile-only auto-framing (never clips width/height; lifts smoothly above bottom sheet)
+      let targetFrameOffsetY = 0;
+      let targetFrameScaleMul = 1;
+      if (isMobileLayoutRef.current) {
+        const s = Math.max(0.12, cfg.scale * 0.7);
+        const curHalfW = (cfg.vesselShape === 'fluid' ? 0.34 : 0.21) * cfg.widthRatio * s;
+        const curHalfH = 0.61 * s;
+        const maxHalfW = 0.5 * aspect * 0.84;
+        const widthFitMul = curHalfW > maxHalfW ? maxHalfW / curHalfW : 1;
+
+        const sheet = mobileSheetStateRef.current;
+        const landscape = isMobileLandscapeRef.current;
+
+        if (sheet === 'half') {
+          // Reframe lamp cleanly inside the visible top ~55% above the bottom sheet
+          targetFrameOffsetY = landscape ? 0.13 : 0.205;
+          const maxSheetHalfH = landscape ? 0.175 : 0.215;
+          const heightFitMul = Math.min(0.76, maxSheetHalfH / Math.max(0.05, curHalfH));
+          targetFrameScaleMul = Math.max(0.35, Math.min(1, widthFitMul, heightFitMul));
+        } else if (sheet === 'full') {
+          targetFrameOffsetY = landscape ? 0.16 : 0.24;
+          const heightFitMul = Math.min(0.7, 0.19 / Math.max(0.05, curHalfH));
+          targetFrameScaleMul = Math.max(0.35, Math.min(1, widthFitMul, heightFitMul));
+        } else {
+          // Closed sheet: centered cleanly above floating dock with safe margins
+          targetFrameOffsetY = landscape ? 0.035 : 0.03;
+          const maxHalfH = landscape ? 0.38 : 0.39;
+          const heightFitMul = curHalfH > maxHalfH ? maxHalfH / curHalfH : 1;
+          targetFrameScaleMul = Math.max(0.4, Math.min(1, widthFitMul, heightFitMul));
+        }
+      }
+
+      const fr = framingRef.current;
+      const frameLerp = prefersReducedMotion ? 1 : 1 - Math.exp(-11 * Math.max(dt, 0.008));
+      const frameDelta =
+        Math.abs(targetFrameOffsetY - fr.offsetY) + Math.abs(targetFrameScaleMul - fr.scaleMul);
+      if (frameDelta > 0.0005) {
+        fr.offsetY += (targetFrameOffsetY - fr.offsetY) * frameLerp;
+        fr.scaleMul += (targetFrameScaleMul - fr.scaleMul) * frameLerp;
+      } else {
+        fr.offsetY = targetFrameOffsetY;
+        fr.scaleMul = targetFrameScaleMul;
       }
 
       // Integrate mobile-only elastic shake spring & falling internal glass glitter
@@ -280,6 +354,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
         isPlayingRef.current ||
         resized ||
         parallaxDelta > 0.0005 ||
+        frameDelta > 0.0005 ||
         hasSpring ||
         hasGlitter ||
         cfg !== lastRenderedConfig ||
@@ -298,8 +373,9 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
       if (rendererRef.current) {
         const tm = transientMotionRef.current;
         tm.offsetX = m.offsetX;
-        tm.offsetY = m.offsetY;
+        tm.offsetY = m.offsetY + fr.offsetY;
         tm.tilt = m.tilt;
+        tm.scaleMultiplier = fr.scaleMul;
         tm.shakeGlitter[0] = m.glitterIntensity;
         tm.shakeGlitter[1] = m.glitterFallDist;
         tm.shakeGlitter[2] = m.glitterClearFront;
@@ -325,7 +401,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
   }, [physicsRef, parallaxRef, viewportRatioRef]);
 
   const isMobileGesture = (e: React.PointerEvent<HTMLCanvasElement>): boolean =>
-    e.pointerType === 'touch' || (typeof window !== 'undefined' && window.innerWidth < 768);
+    e.pointerType === 'touch' || isMobileLayoutRef.current;
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -438,13 +514,20 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
       if (tapDuration < 400) {
         const rect = e.currentTarget.getBoundingClientRect();
         const cfg = configRef.current;
+        const m = mobileMotionRef.current;
+        const fr = framingRef.current;
         const hit = physicsRef.current.hitTestWax(
           e.clientX,
           e.clientY,
           rect,
           cfg,
           parallaxRef.current,
-          mobileMotionRef.current
+          {
+            offsetX: m.offsetX,
+            offsetY: m.offsetY + fr.offsetY,
+            tilt: m.tilt,
+            scaleMultiplier: fr.scaleMul,
+          }
         );
         if (hit) {
           const currentCount = cfg.blobCount;
@@ -475,6 +558,8 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
     }
   };
 
+  const hideMobileDock = isMobileLayout && mobileSheetState !== 'closed';
+
   return (
     <main
       id="stage"
@@ -501,20 +586,37 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
       )}
 
       {/* Floating Bottom Studio Control Dock */}
-      <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-white/88 dark:bg-[#121216]/88 backdrop-blur-md border border-black/[0.08] dark:border-white/[0.09] shadow-[0_12px_36px_rgba(0,0,0,0.12)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.55)] max-w-[calc(100%-24px)] overflow-x-auto transition-colors duration-200">
+      <div
+        style={
+          isMobileLayout
+            ? {
+                bottom: isMobileLandscape
+                  ? 'max(0.625rem, env(safe-area-inset-bottom))'
+                  : 'max(1rem, env(safe-area-inset-bottom))',
+              }
+            : undefined
+        }
+        className={`absolute ${
+          isMobileLayout ? '' : 'bottom-5'
+        } left-1/2 -translate-x-1/2 z-10 flex items-center gap-1 md:gap-1.5 px-1.5 md:px-2.5 py-1.5 md:py-2 rounded-2xl md:rounded-xl bg-white/88 dark:bg-[#121216]/88 backdrop-blur-md border border-black/[0.08] dark:border-white/[0.09] shadow-[0_12px_36px_rgba(0,0,0,0.12)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.55)] max-w-[calc(100dvw-1.5rem)] overflow-x-auto no-scrollbar transition-all duration-200 ${
+          hideMobileDock ? 'opacity-0 translate-y-6 pointer-events-none' : 'opacity-100 translate-y-0'
+        }`}
+      >
         <button
           type="button"
           onClick={onTogglePlay}
           title={isPlaying ? 'Pausar simulação (Espaço)' : 'Reproduzir simulação (Espaço)'}
           aria-label={isPlaying ? 'Pausar simulação' : 'Reproduzir simulação'}
-          className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-[12.5px] font-medium text-[#1C1C24] dark:text-[#E4E4EC] hover:bg-black/[0.06] dark:hover:bg-white/[0.08] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]"
+          className={`${
+            isMobileLayout ? 'h-11 w-11 px-0 justify-center rounded-xl' : 'h-9 px-3 gap-1.5 rounded-lg'
+          } inline-flex items-center text-[12.5px] font-medium text-[#1C1C24] dark:text-[#E4E4EC] md:hover:bg-black/[0.06] md:dark:hover:bg-white/[0.08] active:bg-black/[0.1] dark:active:bg-white/[0.14] active:scale-[0.94] transition-all whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]`}
         >
           {isPlaying ? (
-            <Pause className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            <Pause className="w-4 h-4 md:w-3.5 md:h-3.5 shrink-0" aria-hidden="true" />
           ) : (
-            <Play className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            <Play className="w-4 h-4 md:w-3.5 md:h-3.5 shrink-0" aria-hidden="true" />
           )}
-          <span className="hidden sm:inline">{isPlaying ? 'Pausar' : 'Reproduzir'}</span>
+          {!isMobileLayout && <span>{isPlaying ? 'Pausar' : 'Reproduzir'}</span>}
         </button>
 
         <div className="w-px h-5 bg-black/[0.09] dark:bg-white/[0.08] mx-0.5 shrink-0" aria-hidden="true" />
@@ -525,9 +627,11 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
           disabled={!canUndo}
           title="Desfazer (Ctrl+Z)"
           aria-label="Desfazer"
-          className="h-9 w-9 inline-flex items-center justify-center rounded-lg text-[#565666] dark:text-[#B6B6C4] hover:text-[#14141A] dark:hover:text-white hover:bg-black/[0.06] dark:hover:bg-white/[0.08] disabled:opacity-30 disabled:pointer-events-none transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]"
+          className={`${
+            isMobileLayout ? 'h-11 w-11 rounded-xl' : 'h-9 w-9 rounded-lg'
+          } inline-flex items-center justify-center text-[#565666] dark:text-[#B6B6C4] md:hover:text-[#14141A] md:dark:hover:text-white md:hover:bg-black/[0.06] md:dark:hover:bg-white/[0.08] active:bg-black/[0.1] dark:active:bg-white/[0.14] active:scale-[0.94] disabled:opacity-30 disabled:pointer-events-none transition-all shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]`}
         >
-          <Undo2 className="w-3.5 h-3.5" aria-hidden="true" />
+          <Undo2 className="w-4 h-4 md:w-3.5 md:h-3.5" aria-hidden="true" />
         </button>
 
         <button
@@ -536,9 +640,11 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
           disabled={!canRedo}
           title="Refazer (Ctrl+Shift+Z)"
           aria-label="Refazer"
-          className="h-9 w-9 inline-flex items-center justify-center rounded-lg text-[#565666] dark:text-[#B6B6C4] hover:text-[#14141A] dark:hover:text-white hover:bg-black/[0.06] dark:hover:bg-white/[0.08] disabled:opacity-30 disabled:pointer-events-none transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]"
+          className={`${
+            isMobileLayout ? 'h-11 w-11 rounded-xl' : 'h-9 w-9 rounded-lg'
+          } inline-flex items-center justify-center text-[#565666] dark:text-[#B6B6C4] md:hover:text-[#14141A] md:dark:hover:text-white md:hover:bg-black/[0.06] md:dark:hover:bg-white/[0.08] active:bg-black/[0.1] dark:active:bg-white/[0.14] active:scale-[0.94] disabled:opacity-30 disabled:pointer-events-none transition-all shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]`}
         >
-          <Redo2 className="w-3.5 h-3.5" aria-hidden="true" />
+          <Redo2 className="w-4 h-4 md:w-3.5 md:h-3.5" aria-hidden="true" />
         </button>
 
         <div className="w-px h-5 bg-black/[0.09] dark:bg-white/[0.08] mx-0.5 shrink-0" aria-hidden="true" />
@@ -547,9 +653,11 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
           type="button"
           onClick={onStirFluid}
           title="Aplicar impulso térmico na cera interna"
-          className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-lg text-[12.5px] font-medium bg-black/[0.05] dark:bg-white/[0.07] hover:bg-black/[0.1] dark:hover:bg-white/[0.13] text-[#14141A] dark:text-[#F4F4F6] active:scale-[0.98] transition-all whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]"
+          className={`${
+            isMobileLayout ? 'h-11 px-3.5 rounded-xl' : 'h-9 px-3.5 rounded-lg'
+          } inline-flex items-center gap-1.5 text-[12.5px] font-medium bg-black/[0.05] dark:bg-white/[0.07] md:hover:bg-black/[0.1] md:dark:hover:bg-white/[0.13] active:bg-black/[0.14] dark:active:bg-white/[0.18] text-[#14141A] dark:text-[#F4F4F6] active:scale-[0.96] transition-all whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]`}
         >
-          <Waves className="w-3.5 h-3.5 shrink-0 text-[#4A4A58] dark:text-[#D4D4E0]" aria-hidden="true" />
+          <Waves className="w-4 h-4 md:w-3.5 md:h-3.5 shrink-0 text-[#4A4A58] dark:text-[#D4D4E0]" aria-hidden="true" />
           <span>Agitar Cera</span>
         </button>
 
@@ -560,21 +668,26 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
           onClick={onRandomizeLamp}
           title="Gerar nova configuração de lava lamp"
           aria-label="Randomizar configurações da lâmpada"
-          className="h-9 w-9 inline-flex items-center justify-center rounded-lg text-[#5A5A6A] dark:text-[#9A9AA8] hover:text-[#14141A] dark:hover:text-white hover:bg-black/[0.06] dark:hover:bg-white/[0.08] active:rotate-90 transition-all duration-150 shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]"
+          className={`${
+            isMobileLayout ? 'h-11 w-11 rounded-xl' : 'h-9 w-9 rounded-lg'
+          } inline-flex items-center justify-center text-[#5A5A6A] dark:text-[#9A9AA8] md:hover:text-[#14141A] md:dark:hover:text-white md:hover:bg-black/[0.06] md:dark:hover:bg-white/[0.08] active:bg-black/[0.1] dark:active:bg-white/[0.14] active:rotate-90 active:scale-[0.94] transition-all duration-150 shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]`}
         >
-          <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+          <RefreshCw className="w-4 h-4 md:w-3.5 md:h-3.5" aria-hidden="true" />
         </button>
 
-        {onToggleMobileInspector && (
-          <button
-            type="button"
-            onClick={onToggleMobileInspector}
-            aria-label="Abrir parâmetros"
-            className="md:hidden h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-[12.5px] font-medium bg-black/[0.06] dark:bg-white/[0.08] text-[#14141A] dark:text-[#F4F4F6] whitespace-nowrap shrink-0 cursor-pointer"
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" aria-hidden="true" />
-            <span>Parâmetros</span>
-          </button>
+        {isMobileLayout && onOpenMobileSheet && (
+          <>
+            <div className="w-px h-5 bg-black/[0.09] dark:bg-white/[0.08] mx-0.5 shrink-0" aria-hidden="true" />
+            <button
+              type="button"
+              onClick={onOpenMobileSheet}
+              aria-label="Abrir parâmetros"
+              title="Abrir parâmetros"
+              className="h-11 w-11 inline-flex items-center justify-center rounded-xl bg-black/[0.06] dark:bg-white/[0.09] active:bg-black/[0.14] dark:active:bg-white/[0.18] active:scale-[0.94] text-[#14141A] dark:text-[#F4F4F6] transition-all shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]"
+            >
+              <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
+            </button>
+          </>
         )}
       </div>
     </main>

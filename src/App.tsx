@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { CanvasStage } from './components/CanvasStage';
 import { ExportModal } from './components/ExportModal';
 import { InspectorPanel } from './components/InspectorPanel';
+import { MobileBottomSheet, type MobileSheetState } from './components/MobileBottomSheet';
 import { TopBar } from './components/TopBar';
 import { PRESETS, randomizeLampConfig } from './data/presets';
 import { LavaPhysics } from './engine/physics';
@@ -9,24 +10,37 @@ import type {
   AspectRatioId,
   InspectorTab,
   LavaConfig,
-  PresetDefinition,
 } from './types/lava';
 
 const MAX_HISTORY = 40;
+
+function detectMobileViewport(): { isMobileLayout: boolean; isMobileLandscape: boolean } {
+  if (typeof window === 'undefined') {
+    return { isMobileLayout: false, isMobileLandscape: false };
+  }
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const isCoarse = window.matchMedia('(pointer: coarse)').matches;
+  const isMobileLandscape = h < 500 && (w < 960 || isCoarse);
+  const isMobileLayout = w < 768 || isMobileLandscape;
+  return { isMobileLayout, isMobileLandscape };
+}
 
 export default function App() {
   const initialPreset = PRESETS[0];
 
   const [config, setConfig] = useState<LavaConfig>(() => ({ ...initialPreset.config }));
-  const [activePresetId, setActivePresetId] = useState<string | null>(initialPreset.id);
   const [exportAspectRatio, setExportAspectRatio] = useState<AspectRatioId>('4:5');
   const [activeTab, setActiveTab] = useState<InspectorTab>('frasco');
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [exportOpen, setExportOpen] = useState<boolean>(false);
 
-  // Collapsible lateral parameter panel (starts collapsed, synchronized with stage)
+  // Desktop synchronized collapsible lateral rail/sidebar (100% preserved)
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(false);
-  const [mobileInspectorOpen, setMobileInspectorOpen] = useState<boolean>(false);
+
+  // Mobile portrait/landscape detection + Bottom Sheet snap state ('closed' | 'half' | 'full')
+  const [viewportInfo, setViewportInfo] = useState(detectMobileViewport);
+  const [mobileSheetState, setMobileSheetState] = useState<MobileSheetState>('closed');
 
   const [history, setHistory] = useState<LavaConfig[]>(() => [{ ...initialPreset.config }]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
@@ -41,6 +55,28 @@ export default function App() {
   useEffect(() => {
     document.documentElement.classList.toggle('dark', config.bgMode === 'dark');
   }, [config.bgMode]);
+
+  // Listen to resize / orientation changes for responsive portrait & landscape handling
+  useEffect(() => {
+    const updateViewport = () => {
+      const next = detectMobileViewport();
+      setViewportInfo((prev) =>
+        prev.isMobileLayout === next.isMobileLayout &&
+        prev.isMobileLandscape === next.isMobileLandscape
+          ? prev
+          : next
+      );
+      if (!next.isMobileLayout) {
+        setMobileSheetState('closed');
+      }
+    };
+    window.addEventListener('resize', updateViewport);
+    window.addEventListener('orientationchange', updateViewport);
+    return () => {
+      window.removeEventListener('resize', updateViewport);
+      window.removeEventListener('orientationchange', updateViewport);
+    };
+  }, []);
 
   const pushHistory = useCallback(
     (nextCfg: LavaConfig) => {
@@ -63,7 +99,6 @@ export default function App() {
 
   const handleUpdate = useCallback(
     <K extends keyof LavaConfig>(key: K, value: LavaConfig[K]) => {
-      setActivePresetId(null);
       setConfig((prev) => ({ ...prev, [key]: value }));
     },
     []
@@ -71,7 +106,6 @@ export default function App() {
 
   const handleBatchUpdate = useCallback(
     (partial: Partial<LavaConfig>) => {
-      setActivePresetId(null);
       setConfig((prev) => {
         const next = { ...prev, ...partial };
         pushHistory(next);
@@ -84,20 +118,6 @@ export default function App() {
   const handleCommitHistory = useCallback(() => {
     pushHistory(configRef.current);
   }, [pushHistory]);
-
-  const handleSelectPreset = useCallback(
-    (preset: PresetDefinition) => {
-      const next: LavaConfig = {
-        ...preset.config,
-        bgMode: configRef.current.bgMode,
-        bgLuminance: configRef.current.bgLuminance,
-      };
-      setConfig(next);
-      setActivePresetId(preset.id);
-      pushHistory(next);
-    },
-    [pushHistory]
-  );
 
   const handleOpenTabFromRail = useCallback((tab: InspectorTab) => {
     setActiveTab(tab);
@@ -113,7 +133,6 @@ export default function App() {
     const prevIdx = historyIndex - 1;
     setHistoryIndex(prevIdx);
     setConfig({ ...history[prevIdx] });
-    setActivePresetId(null);
   }, [history, historyIndex]);
 
   const handleRedo = useCallback(() => {
@@ -121,13 +140,11 @@ export default function App() {
     const nextIdx = historyIndex + 1;
     setHistoryIndex(nextIdx);
     setConfig({ ...history[nextIdx] });
-    setActivePresetId(null);
   }, [history, historyIndex]);
 
   const handleRandomizeLamp = useCallback(() => {
     const next = randomizeLampConfig(configRef.current);
     setConfig(next);
-    setActivePresetId(null);
     physicsRef.current.reset(Math.floor(Math.random() * 999999));
     pushHistory(next);
   }, [pushHistory]);
@@ -172,14 +189,17 @@ export default function App() {
     pushHistory(next);
   }, [pushHistory]);
 
+  const { isMobileLayout, isMobileLandscape } = viewportInfo;
+
   return (
-    <div className="h-screen w-screen flex bg-[#F2F3F7] dark:bg-[#0A0A0C] text-[#14141A] dark:text-[#F4F4F6] overflow-hidden transition-colors duration-200">
+    <div className="h-[100dvh] w-[100dvw] min-h-[100dvh] flex bg-[#F2F3F7] dark:bg-[#0A0A0C] text-[#14141A] dark:text-[#F4F4F6] overflow-hidden transition-colors duration-200">
       {/* Full-Height, Full-Width Studio Stage with Floating TopBar */}
       <div className="relative flex-1 min-w-0 h-full overflow-hidden">
         <TopBar
           bgMode={config.bgMode}
           onToggleBgMode={handleToggleBgMode}
           onOpenExport={() => setExportOpen(true)}
+          isMobileLandscape={isMobileLandscape}
         />
 
         <CanvasStage
@@ -196,50 +216,43 @@ export default function App() {
           physicsRef={physicsRef}
           parallaxRef={parallaxRef}
           viewportRatioRef={viewportRatioRef}
-          onToggleMobileInspector={() => setMobileInspectorOpen(true)}
+          isMobileLayout={isMobileLayout}
+          isMobileLandscape={isMobileLandscape}
+          mobileSheetState={mobileSheetState}
+          onOpenMobileSheet={() => setMobileSheetState('half')}
         />
       </div>
 
-      {/* Desktop Synchronized Collapsible Lateral Rail / Sidebar */}
-      <div className="hidden md:flex h-full shrink-0">
-        <InspectorPanel
-          isOpen={inspectorOpen}
-          onToggleOpen={() => setInspectorOpen((o) => !o)}
-          onOpenTab={handleOpenTabFromRail}
-          config={config}
-          activeTab={activeTab}
-          activePresetId={activePresetId}
-          onTabChange={setActiveTab}
-          onUpdate={handleUpdate}
-          onBatchUpdate={handleBatchUpdate}
-          onCommitHistory={handleCommitHistory}
-          onSelectPreset={handleSelectPreset}
-        />
-      </div>
-
-      {/* Mobile Slide-over Inspector Drawer */}
-      {mobileInspectorOpen && (
-        <div
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setMobileInspectorOpen(false);
-          }}
-          className="md:hidden fixed inset-0 z-40 flex justify-end bg-black/45 dark:bg-black/65 backdrop-blur-xs"
-        >
+      {/* Desktop Synchronized Collapsible Lateral Rail / Sidebar (100% preserved) */}
+      {!isMobileLayout && (
+        <div className="hidden md:flex h-full shrink-0">
           <InspectorPanel
-            isOpen={true}
-            isMobileDrawer={true}
-            onToggleOpen={() => setMobileInspectorOpen(false)}
+            isOpen={inspectorOpen}
+            onToggleOpen={() => setInspectorOpen((o) => !o)}
             onOpenTab={handleOpenTabFromRail}
             config={config}
             activeTab={activeTab}
-            activePresetId={activePresetId}
             onTabChange={setActiveTab}
             onUpdate={handleUpdate}
             onBatchUpdate={handleBatchUpdate}
             onCommitHistory={handleCommitHistory}
-            onSelectPreset={handleSelectPreset}
           />
         </div>
+      )}
+
+      {/* Mobile Interactive Bottom Sheet (~45% / ~85%) */}
+      {isMobileLayout && (
+        <MobileBottomSheet
+          sheetState={mobileSheetState}
+          onSheetStateChange={setMobileSheetState}
+          isMobileLandscape={isMobileLandscape}
+          config={config}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          onUpdate={handleUpdate}
+          onBatchUpdate={handleBatchUpdate}
+          onCommitHistory={handleCommitHistory}
+        />
       )}
 
       <ExportModal

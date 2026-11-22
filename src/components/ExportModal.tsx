@@ -278,10 +278,16 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       aria-modal="true"
       aria-labelledby="export-modal-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/75 backdrop-blur-sm"
+      style={{
+        paddingTop: 'max(1rem, env(safe-area-inset-top))',
+        paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
+        paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+        paddingRight: 'max(1rem, env(safe-area-inset-right))',
+      }}
     >
-      <div className="w-full max-w-[460px] rounded-xl bg-white dark:bg-[#131318] border border-black/[0.1] dark:border-white/[0.1] shadow-[0_32px_90px_rgba(0,0,0,0.3)] dark:shadow-[0_32px_90px_rgba(0,0,0,0.8)] overflow-hidden">
+      <div className="w-full max-w-[460px] max-h-[90dvh] flex flex-col rounded-2xl md:rounded-xl bg-white dark:bg-[#131318] border border-black/[0.1] dark:border-white/[0.1] shadow-[0_32px_90px_rgba(0,0,0,0.3)] dark:shadow-[0_32px_90px_rgba(0,0,0,0.8)] overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-black/[0.08] dark:border-white/[0.07]">
+        <div className="flex items-center justify-between px-5 py-3.5 md:py-4 border-b border-black/[0.08] dark:border-white/[0.07] shrink-0">
           <h2
             id="export-modal-title"
             className="text-[15px] font-semibold text-[#14141A] dark:text-[#F4F4F6]"
@@ -292,14 +298,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             type="button"
             onClick={handleCancelOrClose}
             aria-label="Fechar janela de exportação"
-            className="p-1.5 rounded-lg text-[#6A6A7A] dark:text-[#8E8E9E] hover:text-[#14141A] dark:hover:text-white hover:bg-black/[0.06] dark:hover:bg-white/[0.08] transition-colors cursor-pointer"
+            className="h-11 w-11 md:h-auto md:w-auto md:p-1.5 -mr-2 md:mr-0 inline-flex items-center justify-center rounded-xl md:rounded-lg text-[#6A6A7A] dark:text-[#8E8E9E] md:hover:text-[#14141A] md:dark:hover:text-white md:hover:bg-black/[0.06] md:dark:hover:bg-white/[0.08] active:bg-black/[0.1] dark:active:bg-white/[0.12] active:scale-95 transition-all cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Body */}
-        <div className="p-5 space-y-4">
+        <div className="p-5 space-y-4 overflow-y-auto overscroll-contain studio-scroll flex-1 min-h-0">
           {/* Export Mode Switcher */}
           <div className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-[#EAEBF0] dark:bg-[#0A0A0C] border border-black/[0.06] dark:border-white/[0.06]">
             <button
@@ -310,10 +316,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 setStatusMessage(null);
                 setErrorMsg(null);
               }}
-              className={`flex items-center justify-center gap-2 py-2 text-[12.5px] font-medium rounded-md transition-colors cursor-pointer ${
+              className={`min-h-[44px] md:min-h-0 flex items-center justify-center gap-2 py-2 text-[12.5px] font-medium rounded-md transition-all active:scale-[0.97] cursor-pointer ${
                 mode === 'image'
                   ? 'bg-white dark:bg-[#22222A] text-[#14141A] dark:text-[#F4F4F6] shadow-xs dark:shadow-none'
-                  : 'text-[#626272] dark:text-[#848494] hover:text-[#14141A] dark:hover:text-[#D4D4DF]'
+                  : 'text-[#626272] dark:text-[#848494] md:hover:text-[#14141A] md:dark:hover:text-[#D4D4DF]'
               }`}
             >
               <ImageIcon className="w-3.5 h-3.5" aria-hidden="true" />
@@ -327,10 +333,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 setStatusMessage(null);
                 setErrorMsg(null);
               }}
-              className={`flex items-center justify-center gap-2 py-2 text-[12.5px] font-medium rounded-md transition-colors cursor-pointer ${
+              className={`min-h-[44px] md:min-h-0 flex items-center justify-center gap-2 py-2 text-[12.5px] font-medium rounded-md transition-all active:scale-[0.97] cursor-pointer ${
                 mode === 'video'
                   ? 'bg-white dark:bg-[#22222A] text-[#14141A] dark:text-[#F4F4F6] shadow-xs dark:shadow-none'
-                  : 'text-[#626272] dark:text-[#848494] hover:text-[#14141A] dark:hover:text-[#D4D4DF]'
+                  : 'text-[#626272] dark:text-[#848494] md:hover:text-[#14141A] md:dark:hover:text-[#D4D4DF]'
               }`}
             >
               <Film className="w-3.5 h-3.5" aria-hidden="true" />
@@ -458,12 +464,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         </div>
 
         {/* Footer Actions */}
-        <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-black/[0.08] dark:border-white/[0.07] bg-[#F6F6F9] dark:bg-[#0D0D11]">
+        <div className="flex items-center justify-between gap-3 px-5 py-3.5 md:py-4 border-t border-black/[0.08] dark:border-white/[0.07] bg-[#F6F6F9] dark:bg-[#0D0D11] shrink-0">
           <button
             type="button"
             onClick={handleCopyRecipe}
             disabled={isExporting}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-[12px] font-medium text-[#5A5A6A] dark:text-[#A4A4B4] hover:text-[#14141A] dark:hover:text-white rounded-lg hover:bg-black/[0.05] dark:hover:bg-white/[0.06] transition-colors whitespace-nowrap cursor-pointer disabled:opacity-40"
+            className="min-h-[44px] md:min-h-0 inline-flex items-center gap-1.5 px-3 py-2 text-[12px] font-medium text-[#5A5A6A] dark:text-[#A4A4B4] md:hover:text-[#14141A] md:dark:hover:text-white rounded-xl md:rounded-lg md:hover:bg-black/[0.05] md:dark:hover:bg-white/[0.06] active:bg-black/[0.08] dark:active:bg-white/[0.1] active:scale-[0.97] transition-all whitespace-nowrap cursor-pointer disabled:opacity-40"
           >
             {copiedJson ? (
               <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-[#98E2B4]" aria-hidden="true" />
@@ -480,7 +486,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 onClick={() => {
                   cancelRecordRef.current = true;
                 }}
-                className="px-4 py-2 text-[12.5px] font-medium text-[#14141A] dark:text-[#E4E4EC] bg-black/[0.08] dark:bg-white/[0.08] hover:bg-black/[0.14] dark:hover:bg-white/[0.14] rounded-lg transition-colors cursor-pointer"
+                className="min-h-[44px] md:min-h-0 px-4 py-2 text-[12.5px] font-medium text-[#14141A] dark:text-[#E4E4EC] bg-black/[0.08] dark:bg-white/[0.08] md:hover:bg-black/[0.14] md:dark:hover:bg-white/[0.14] active:scale-[0.97] rounded-xl md:rounded-lg transition-all cursor-pointer"
               >
                 Cancelar
               </button>
@@ -489,7 +495,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 type="button"
                 disabled={isExporting}
                 onClick={mode === 'image' ? handleExportImage : handleExportVideo}
-                className="inline-flex items-center gap-2 px-4 py-2 text-[13px] font-semibold text-white bg-[#FF5C35] hover:bg-[#FF6D49] active:scale-[0.98] rounded-lg transition-all whitespace-nowrap cursor-pointer disabled:opacity-60"
+                className="min-h-[44px] md:min-h-0 inline-flex items-center gap-2 px-4 py-2 text-[13px] font-semibold text-white bg-[#FF5C35] md:hover:bg-[#FF6D49] active:scale-[0.97] active:bg-[#E84D27] rounded-xl md:rounded-lg transition-all whitespace-nowrap cursor-pointer disabled:opacity-60"
               >
                 {isExporting ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />

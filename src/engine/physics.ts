@@ -209,7 +209,7 @@ export class LavaPhysics {
     rect: DOMRect,
     config: LavaConfig,
     parallax: [number, number],
-    transientOffset?: { offsetX: number; offsetY: number; tilt: number }
+    transientOffset?: { offsetX: number; offsetY: number; tilt: number; scaleMultiplier?: number }
   ): WaxHitResult | null {
     if (rect.width <= 0 || rect.height <= 0) return null;
 
@@ -248,7 +248,7 @@ export class LavaPhysics {
     const effOffsetX = config.offsetX + (transientOffset?.offsetX ?? 0);
     const effOffsetY = config.offsetY + (transientOffset?.offsetY ?? 0);
     const effTilt = config.tilt + (transientOffset?.tilt ?? 0);
-    const safeScale = Math.max(0.12, config.scale * 0.7);
+    const safeScale = Math.max(0.12, config.scale * 0.7 * (transientOffset?.scaleMultiplier ?? 1));
     const invScale = 1 / safeScale;
 
     // Transform into lamp local space (matches GLSL column-major mat2(c, -s, s, c))

@@ -10,13 +10,12 @@ import {
   SunMedium,
   X,
 } from 'lucide-react';
-import { CURATED_PALETTES, PRESETS } from '../data/presets';
+import { CURATED_PALETTES } from '../data/presets';
 import type {
   BackgroundMode,
   InspectorTab,
   LavaConfig,
   MetalFinish,
-  PresetDefinition,
   VesselShape,
 } from '../types/lava';
 import {
@@ -32,13 +31,20 @@ interface InspectorPanelProps {
   onOpenTab: (tab: InspectorTab) => void;
   config: LavaConfig;
   activeTab: InspectorTab;
-  activePresetId: string | null;
   onTabChange: (tab: InspectorTab) => void;
   onUpdate: <K extends keyof LavaConfig>(key: K, value: LavaConfig[K]) => void;
   onBatchUpdate: (partial: Partial<LavaConfig>) => void;
   onCommitHistory: () => void;
-  onSelectPreset: (preset: PresetDefinition) => void;
   isMobileDrawer?: boolean;
+}
+
+export interface InspectorControlsBodyProps {
+  config: LavaConfig;
+  activeTab: InspectorTab;
+  onUpdate: <K extends keyof LavaConfig>(key: K, value: LavaConfig[K]) => void;
+  onBatchUpdate: (partial: Partial<LavaConfig>) => void;
+  onCommitHistory: () => void;
+  isTouchSheet?: boolean;
 }
 
 const VESSEL_SHAPES: { id: VesselShape; label: string; svg: React.ReactNode }[] = [
@@ -137,18 +143,473 @@ const TABS: { value: InspectorTab; label: string; Icon: React.FC<{ className?: s
   { value: 'cena', label: 'Cena', Icon: SunMedium },
 ];
 
+/**
+ * Shared inspector tab content used by both the Desktop sidebar and Mobile Bottom Sheet.
+ * Touch-friendly enhancements apply strictly when `isTouchSheet` is true, preserving desktop verbatim.
+ */
+export const InspectorControlsBody: React.FC<InspectorControlsBodyProps> = ({
+  config,
+  activeTab,
+  onUpdate,
+  onBatchUpdate,
+  onCommitHistory,
+  isTouchSheet = false,
+}) => {
+  return (
+    <>
+      {activeTab === 'frasco' && (
+        <>
+          <SectionBlock title="Tipo de Lava Lamp">
+            <div className={isTouchSheet ? 'grid grid-cols-5 gap-2' : 'grid grid-cols-5 gap-1.5'}>
+              {VESSEL_SHAPES.map((item) => {
+                const active = config.vesselShape === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      onUpdate('vesselShape', item.id);
+                      onCommitHistory();
+                    }}
+                    className={`flex flex-col items-center justify-center gap-1 rounded-lg border transition-all cursor-pointer active:scale-[0.95] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35] ${
+                      isTouchSheet ? 'min-h-[64px] py-2 px-1 rounded-xl' : 'py-2 px-1'
+                    } ${
+                      active
+                        ? 'bg-[#FFF5F2] dark:bg-[#212129] border-[#FF5C35]/70 text-[#14141A] dark:text-[#F4F4F6]'
+                        : 'bg-[#F6F6F9] dark:bg-[#0B0B0E] border-black/[0.06] dark:border-white/[0.06] text-[#666676] dark:text-[#848494] md:hover:text-[#14141A] md:dark:hover:text-[#D8D8E2] md:hover:border-black/[0.16] md:dark:hover:border-white/[0.14] active:bg-black/[0.06] dark:active:bg-white/[0.08]'
+                    }`}
+                  >
+                    {item.svg}
+                    <span className="text-[11px] md:text-[10.5px] font-medium whitespace-nowrap truncate max-w-full">
+                      {item.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </SectionBlock>
+
+          {config.vesselShape !== 'fluid' && (
+            <SectionBlock title="Acabamento da Base e Tampa">
+              <div className={isTouchSheet ? 'grid grid-cols-3 gap-2' : 'grid grid-cols-5 gap-1.5'}>
+                {METAL_FINISHES.map((fin) => {
+                  const active = config.metalFinish === fin.id;
+                  return (
+                    <button
+                      key={fin.id}
+                      type="button"
+                      onClick={() => {
+                        onUpdate('metalFinish', fin.id);
+                        onCommitHistory();
+                      }}
+                      className={`flex items-center border transition-all cursor-pointer active:scale-[0.96] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35] ${
+                        isTouchSheet
+                          ? 'min-h-[48px] flex-row justify-start gap-2 px-2.5 py-2 rounded-xl text-left'
+                          : 'flex-col gap-1.5 p-1.5 rounded-lg'
+                      } ${
+                        active
+                          ? 'bg-[#FFF5F2] dark:bg-[#212129] border-[#FF5C35]/70 text-[#14141A] dark:text-[#F4F4F6]'
+                          : 'bg-[#F6F6F9] dark:bg-[#0B0B0E] border-black/[0.06] dark:border-white/[0.06] text-[#666676] dark:text-[#848494] md:hover:text-[#14141A] md:dark:hover:text-[#D8D8E2] active:bg-black/[0.06] dark:active:bg-white/[0.08]'
+                      }`}
+                    >
+                      <span
+                        className="w-7 h-7 rounded-full border border-black/15 dark:border-white/15 shrink-0"
+                        style={{ background: fin.preview }}
+                        aria-hidden="true"
+                      />
+                      <span
+                        className={
+                          isTouchSheet
+                            ? 'text-[11.5px] font-medium leading-tight'
+                            : 'text-[10px] font-medium truncate max-w-full'
+                        }
+                      >
+                        {fin.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </SectionBlock>
+          )}
+
+          <SectionBlock title="Proporção e Enquadramento">
+            <SliderControl
+              label="Escala"
+              value={config.scale}
+              min={0.25}
+              max={1.0}
+              step={0.01}
+              displayValue={`${Math.round(config.scale * 100)}%`}
+              onChange={(v) => onUpdate('scale', v)}
+              onCommit={onCommitHistory}
+            />
+            {config.vesselShape !== 'fluid' && (
+              <SliderControl
+                label="Largura do Frasco"
+                value={config.widthRatio}
+                min={0.7}
+                max={1.38}
+                step={0.01}
+                displayValue={`${Math.round(config.widthRatio * 100)}%`}
+                onChange={(v) => onUpdate('widthRatio', v)}
+                onCommit={onCommitHistory}
+              />
+            )}
+            <SliderControl
+              label="Inclinação"
+              value={config.tilt}
+              min={-0.3}
+              max={0.3}
+              step={0.005}
+              displayValue={`${Math.round((config.tilt * 180) / Math.PI)}°`}
+              onChange={(v) => onUpdate('tilt', v)}
+              onCommit={onCommitHistory}
+            />
+            <SliderControl
+              label="Posição Horizontal"
+              value={config.offsetX}
+              min={-0.45}
+              max={0.45}
+              step={0.01}
+              onChange={(v) => onUpdate('offsetX', v)}
+              onCommit={onCommitHistory}
+            />
+            <SliderControl
+              label="Posição Vertical"
+              value={config.offsetY}
+              min={-0.25}
+              max={0.25}
+              step={0.01}
+              onChange={(v) => onUpdate('offsetY', v)}
+              onCommit={onCommitHistory}
+            />
+          </SectionBlock>
+        </>
+      )}
+
+      {activeTab === 'interno' && (
+        <>
+          <SectionBlock title="Composição da Cera">
+            <SliderControl
+              label="Quantidade de Gotas"
+              value={config.blobCount}
+              min={1}
+              max={14}
+              step={1}
+              onChange={(v) => onUpdate('blobCount', Math.round(v))}
+              onCommit={onCommitHistory}
+            />
+            <SliderControl
+              label="Volume das Gotas"
+              value={config.waxScale}
+              min={0.55}
+              max={1.45}
+              step={0.01}
+              displayValue={`${Math.round(config.waxScale * 100)}%`}
+              onChange={(v) => onUpdate('waxScale', v)}
+              onCommit={onCommitHistory}
+            />
+            <SliderControl
+              label="Viscosidade e Fusão"
+              value={config.viscosity}
+              min={0.04}
+              max={0.4}
+              step={0.005}
+              onChange={(v) => onUpdate('viscosity', v)}
+              onCommit={onCommitHistory}
+            />
+            <SliderControl
+              label="Velocidade Térmica"
+              value={config.flowSpeed}
+              min={0}
+              max={2.4}
+              step={0.02}
+              displayValue={`${config.flowSpeed.toFixed(2)}x`}
+              onChange={(v) => onUpdate('flowSpeed', v)}
+              onCommit={onCommitHistory}
+            />
+          </SectionBlock>
+
+          <SectionBlock title="Detalhes Internos e Vidro">
+            <SliderControl
+              label="Organicidade da Cera"
+              value={config.turbulence}
+              min={0}
+              max={0.65}
+              step={0.01}
+              displayValue={`${Math.round((config.turbulence / 0.65) * 100)}%`}
+              onChange={(v) => onUpdate('turbulence', v)}
+              onCommit={onCommitHistory}
+            />
+            <SliderControl
+              label="Microbolhas e Glitter Suspenso"
+              value={config.particles}
+              min={0}
+              max={1}
+              step={0.01}
+              displayValue={`${Math.round(config.particles * 100)}%`}
+              onChange={(v) => onUpdate('particles', v)}
+              onCommit={onCommitHistory}
+            />
+            <SliderControl
+              label="Refração e Brilho do Vidro"
+              value={config.glassRefraction}
+              min={0}
+              max={1}
+              step={0.01}
+              displayValue={`${Math.round(config.glassRefraction * 100)}%`}
+              onChange={(v) => onUpdate('glassRefraction', v)}
+              onCommit={onCommitHistory}
+            />
+            <SliderControl
+              label="Densidade do Líquido"
+              value={config.liquidDensity}
+              min={0}
+              max={1}
+              step={0.01}
+              displayValue={`${Math.round(config.liquidDensity * 100)}%`}
+              onChange={(v) => onUpdate('liquidDensity', v)}
+              onCommit={onCommitHistory}
+            />
+          </SectionBlock>
+        </>
+      )}
+
+      {activeTab === 'cores' && (
+        <>
+          <SectionBlock title="Paletas Curadas">
+            <div className={isTouchSheet ? 'grid grid-cols-2 gap-2' : 'grid grid-cols-2 gap-1.5'}>
+              {CURATED_PALETTES.map((pal) => (
+                <button
+                  key={pal.name}
+                  type="button"
+                  onClick={() => {
+                    onBatchUpdate({
+                      waxColorHot: pal.waxColorHot,
+                      waxColorCool: pal.waxColorCool,
+                      liquidColor: pal.liquidColor,
+                      liquidDensity: pal.liquidDensity,
+                    });
+                  }}
+                  className={`flex items-center justify-between gap-2 rounded-lg bg-[#F6F6F9] dark:bg-[#0B0B0E] border border-black/[0.06] dark:border-white/[0.06] md:hover:border-black/[0.16] md:dark:hover:border-white/[0.16] active:scale-[0.97] active:bg-[#EAEAF0] dark:active:bg-[#191922] transition-all text-left cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35] ${
+                    isTouchSheet ? 'min-h-[48px] px-3 py-2.5 rounded-xl' : 'px-2.5 py-2'
+                  }`}
+                >
+                  <span
+                    className={
+                      isTouchSheet
+                        ? 'text-[12.5px] font-medium leading-snug text-[#2A2A36] dark:text-[#D8D8E4]'
+                        : 'text-[11.5px] font-medium text-[#2A2A36] dark:text-[#D8D8E4] truncate'
+                    }
+                  >
+                    {pal.name}
+                  </span>
+                  <span className="flex items-center gap-0.5 shrink-0" aria-hidden="true">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full border border-black/15"
+                      style={{ backgroundColor: pal.waxColorHot }}
+                    />
+                    <span
+                      className="w-2.5 h-2.5 rounded-full border border-black/15"
+                      style={{ backgroundColor: pal.waxColorCool }}
+                    />
+                    <span
+                      className="w-2.5 h-2.5 rounded-full border border-black/15"
+                      style={{ backgroundColor: pal.liquidColor }}
+                    />
+                  </span>
+                </button>
+              ))}
+            </div>
+          </SectionBlock>
+
+          <SectionBlock title="Cores da Cera e Líquido">
+            <ColorControl
+              label="Cera Quente (Base)"
+              value={config.waxColorHot}
+              onChange={(hex) => onUpdate('waxColorHot', hex)}
+            />
+            <ColorControl
+              label="Cera Fria (Topo)"
+              value={config.waxColorCool}
+              onChange={(hex) => onUpdate('waxColorCool', hex)}
+            />
+            <ColorControl
+              label="Cor do Líquido"
+              value={config.liquidColor}
+              onChange={(hex) => onUpdate('liquidColor', hex)}
+            />
+            <SliderControl
+              label="Transparência / Densidade"
+              value={config.liquidDensity}
+              min={0}
+              max={1}
+              step={0.01}
+              displayValue={`${Math.round(config.liquidDensity * 100)}%`}
+              onChange={(v) => onUpdate('liquidDensity', v)}
+              onCommit={onCommitHistory}
+            />
+          </SectionBlock>
+
+          <SectionBlock title="Ajuste Cromático">
+            <SliderControl
+              label="Saturação"
+              value={config.saturation}
+              min={0.4}
+              max={1.6}
+              step={0.02}
+              displayValue={`${Math.round(config.saturation * 100)}%`}
+              onChange={(v) => onUpdate('saturation', v)}
+              onCommit={onCommitHistory}
+            />
+            <SliderControl
+              label="Contraste"
+              value={config.contrast}
+              min={0.7}
+              max={1.5}
+              step={0.02}
+              displayValue={`${Math.round(config.contrast * 100)}%`}
+              onChange={(v) => onUpdate('contrast', v)}
+              onCommit={onCommitHistory}
+            />
+          </SectionBlock>
+        </>
+      )}
+
+      {activeTab === 'cena' && (
+        <>
+          <SectionBlock title="Fundo Infinito">
+            <div className="space-y-1.5">
+              <div className="text-[13px] md:text-[12px] text-[#3C3C48] dark:text-[#B6B6C2] font-medium">
+                Modo do Fundo
+              </div>
+              <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-[#EAEBF0] dark:bg-[#0A0A0C] border border-black/[0.06] dark:border-white/[0.06]">
+                {(
+                  [
+                    { value: 'light', label: 'Modo Claro', Icon: Sun },
+                    { value: 'dark', label: 'Modo Escuro', Icon: Moon },
+                  ] as const
+                ).map(({ value, label, Icon }) => {
+                  const active = config.bgMode === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => {
+                        onUpdate('bgMode', value as BackgroundMode);
+                        onCommitHistory();
+                      }}
+                      className={`min-h-[44px] md:min-h-0 inline-flex items-center justify-center gap-1.5 px-2.5 py-2 text-[12.5px] md:text-[12px] font-medium rounded-md transition-all duration-150 whitespace-nowrap active:scale-[0.97] cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35] ${
+                        active
+                          ? 'bg-white dark:bg-[#222229] text-[#14141A] dark:text-[#F4F4F6] shadow-xs dark:shadow-none'
+                          : 'text-[#626272] dark:text-[#848494] md:hover:text-[#14141A] md:dark:hover:text-[#D4D4DE]'
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      <span>{label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <SliderControl
+              label="Luminosidade do Fundo"
+              value={config.bgLuminance}
+              min={0}
+              max={1}
+              step={0.01}
+              displayValue={`${Math.round(config.bgLuminance * 100)}%`}
+              onChange={(v) => onUpdate('bgLuminance', v)}
+              onCommit={onCommitHistory}
+            />
+
+            {config.vesselShape !== 'fluid' && (
+              <>
+                <SliderControl
+                  label="Sombra de Estúdio"
+                  value={config.studioShadow}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  displayValue={`${Math.round(config.studioShadow * 100)}%`}
+                  onChange={(v) => onUpdate('studioShadow', v)}
+                  onCommit={onCommitHistory}
+                />
+                <SliderControl
+                  label="Reflexo no Chão"
+                  value={config.floorReflection}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  displayValue={`${Math.round(config.floorReflection * 100)}%`}
+                  onChange={(v) => onUpdate('floorReflection', v)}
+                  onCommit={onCommitHistory}
+                />
+              </>
+            )}
+
+            <SliderControl
+              label="Granulação Fotográfica"
+              value={config.filmGrain}
+              min={0}
+              max={0.4}
+              step={0.01}
+              displayValue={`${Math.round((config.filmGrain / 0.4) * 100)}%`}
+              onChange={(v) => onUpdate('filmGrain', v)}
+              onCommit={onCommitHistory}
+            />
+          </SectionBlock>
+
+          <SectionBlock title="Iluminação Interna">
+            <SliderControl
+              label="Incandescência da Base"
+              value={config.bottomGlow}
+              min={0}
+              max={1.8}
+              step={0.02}
+              displayValue={`${Math.round(config.bottomGlow * 100)}%`}
+              onChange={(v) => onUpdate('bottomGlow', v)}
+              onCommit={onCommitHistory}
+            />
+            <SliderControl
+              label="Translucidez da Cera"
+              value={config.subsurface}
+              min={0}
+              max={1}
+              step={0.01}
+              displayValue={`${Math.round(config.subsurface * 100)}%`}
+              onChange={(v) => onUpdate('subsurface', v)}
+              onCommit={onCommitHistory}
+            />
+            <SliderControl
+              label="Halo Luminoso (Bloom)"
+              value={config.bloom}
+              min={0}
+              max={1.1}
+              step={0.01}
+              displayValue={`${Math.round(config.bloom * 100)}%`}
+              onChange={(v) => onUpdate('bloom', v)}
+              onCommit={onCommitHistory}
+            />
+          </SectionBlock>
+        </>
+      )}
+    </>
+  );
+};
+
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   isOpen,
   onToggleOpen,
   onOpenTab,
   config,
   activeTab,
-  activePresetId,
   onTabChange,
   onUpdate,
   onBatchUpdate,
   onCommitHistory,
-  onSelectPreset,
   isMobileDrawer = false,
 }) => {
   const toggleThemeMode = () => {
@@ -156,7 +617,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     onCommitHistory();
   };
 
-  // Collapsed Lateral Rail (Desktop synchronized side menu)
+  // Collapsed Lateral Rail (Desktop synchronized side menu — 100% preserved)
   if (!isMobileDrawer && !isOpen) {
     return (
       <aside
@@ -260,53 +721,6 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           </div>
         </div>
 
-        {/* Curated Presets Strip */}
-        <div className="px-4 pt-3.5 pb-3 border-b border-black/[0.07] dark:border-white/[0.07] shrink-0">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[12px] font-semibold text-[#14141A] dark:text-[#F4F4F6]">
-              Modelos de Lava Lamp
-            </span>
-            <span className="text-[11px] text-[#707080] dark:text-[#7D7D8C] font-mono-num">
-              {PRESETS.length} modelos
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-1.5">
-            {PRESETS.map((preset) => {
-              const selected = activePresetId === preset.id;
-              return (
-                <button
-                  key={preset.id}
-                  type="button"
-                  onClick={() => onSelectPreset(preset)}
-                  className={`group text-left px-2.5 py-2 rounded-lg border transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35] ${
-                    selected
-                      ? 'bg-[#FFF5F2] dark:bg-[#1D1D24] border-[#FF5C35]/70'
-                      : 'bg-[#F6F6F9] dark:bg-[#0B0B0E] border-black/[0.06] dark:border-white/[0.06] hover:border-black/[0.16] dark:hover:border-white/[0.15] hover:bg-[#EFEFF4] dark:hover:bg-[#15151B]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[12px] font-medium text-[#14141A] dark:text-[#EFEFF4] truncate">
-                      {preset.name}
-                    </span>
-                    <span className="flex items-center -space-x-1 shrink-0" aria-hidden="true">
-                      {preset.swatches.map((hex, idx) => (
-                        <span
-                          key={idx}
-                          className="w-2.5 h-2.5 rounded-full border border-black/25 dark:border-black/50"
-                          style={{ backgroundColor: hex }}
-                        />
-                      ))}
-                    </span>
-                  </div>
-                  <p className="text-[10.5px] text-[#6A6A7A] dark:text-[#7A7A88] truncate mt-0.5">
-                    {preset.subtitle}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
         {/* Category Tabs */}
         <div className="px-4 py-3 border-b border-black/[0.07] dark:border-white/[0.07] shrink-0">
           <SegmentedControl
@@ -319,425 +733,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
         {/* Active Tab Controls */}
         <div className="flex-1 overflow-y-auto studio-scroll px-4 pb-8">
-          {activeTab === 'frasco' && (
-            <>
-              <SectionBlock title="Tipo de Lava Lamp">
-                <div className="grid grid-cols-5 gap-1.5">
-                  {VESSEL_SHAPES.map((item) => {
-                    const active = config.vesselShape === item.id;
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => {
-                          onUpdate('vesselShape', item.id);
-                          onCommitHistory();
-                        }}
-                        className={`flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-lg border transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35] ${
-                          active
-                            ? 'bg-[#FFF5F2] dark:bg-[#212129] border-[#FF5C35]/70 text-[#14141A] dark:text-[#F4F4F6]'
-                            : 'bg-[#F6F6F9] dark:bg-[#0B0B0E] border-black/[0.06] dark:border-white/[0.06] text-[#666676] dark:text-[#848494] hover:text-[#14141A] dark:hover:text-[#D8D8E2] hover:border-black/[0.16] dark:hover:border-white/[0.14]'
-                        }`}
-                      >
-                        {item.svg}
-                        <span className="text-[10.5px] font-medium whitespace-nowrap truncate max-w-full">
-                          {item.label}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </SectionBlock>
-
-              {config.vesselShape !== 'fluid' && (
-                <SectionBlock title="Acabamento da Base e Tampa">
-                  <div className="grid grid-cols-5 gap-1.5">
-                    {METAL_FINISHES.map((fin) => {
-                      const active = config.metalFinish === fin.id;
-                      return (
-                        <button
-                          key={fin.id}
-                          type="button"
-                          onClick={() => {
-                            onUpdate('metalFinish', fin.id);
-                            onCommitHistory();
-                          }}
-                          className={`flex flex-col items-center gap-1.5 p-1.5 rounded-lg border transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35] ${
-                            active
-                              ? 'bg-[#FFF5F2] dark:bg-[#212129] border-[#FF5C35]/70 text-[#14141A] dark:text-[#F4F4F6]'
-                              : 'bg-[#F6F6F9] dark:bg-[#0B0B0E] border-black/[0.06] dark:border-white/[0.06] text-[#666676] dark:text-[#848494] hover:text-[#14141A] dark:hover:text-[#D8D8E2]'
-                          }`}
-                        >
-                          <span
-                            className="w-7 h-7 rounded-full border border-black/15 dark:border-white/15 shrink-0"
-                            style={{ background: fin.preview }}
-                            aria-hidden="true"
-                          />
-                          <span className="text-[10px] font-medium truncate max-w-full">
-                            {fin.label}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </SectionBlock>
-              )}
-
-              <SectionBlock title="Proporção e Enquadramento">
-                <SliderControl
-                  label="Escala"
-                  value={config.scale}
-                  min={0.25}
-                  max={1.0}
-                  step={0.01}
-                  displayValue={`${Math.round(config.scale * 100)}%`}
-                  onChange={(v) => onUpdate('scale', v)}
-                  onCommit={onCommitHistory}
-                />
-                {config.vesselShape !== 'fluid' && (
-                  <SliderControl
-                    label="Largura do Frasco"
-                    value={config.widthRatio}
-                    min={0.7}
-                    max={1.38}
-                    step={0.01}
-                    displayValue={`${Math.round(config.widthRatio * 100)}%`}
-                    onChange={(v) => onUpdate('widthRatio', v)}
-                    onCommit={onCommitHistory}
-                  />
-                )}
-                <SliderControl
-                  label="Inclinação"
-                  value={config.tilt}
-                  min={-0.3}
-                  max={0.3}
-                  step={0.005}
-                  displayValue={`${Math.round((config.tilt * 180) / Math.PI)}°`}
-                  onChange={(v) => onUpdate('tilt', v)}
-                  onCommit={onCommitHistory}
-                />
-                <SliderControl
-                  label="Posição Horizontal"
-                  value={config.offsetX}
-                  min={-0.45}
-                  max={0.45}
-                  step={0.01}
-                  onChange={(v) => onUpdate('offsetX', v)}
-                  onCommit={onCommitHistory}
-                />
-                <SliderControl
-                  label="Posição Vertical"
-                  value={config.offsetY}
-                  min={-0.25}
-                  max={0.25}
-                  step={0.01}
-                  onChange={(v) => onUpdate('offsetY', v)}
-                  onCommit={onCommitHistory}
-                />
-              </SectionBlock>
-            </>
-          )}
-
-          {activeTab === 'interno' && (
-            <>
-              <SectionBlock title="Composição da Cera">
-                <SliderControl
-                  label="Quantidade de Gotas"
-                  value={config.blobCount}
-                  min={1}
-                  max={14}
-                  step={1}
-                  onChange={(v) => onUpdate('blobCount', Math.round(v))}
-                  onCommit={onCommitHistory}
-                />
-                <SliderControl
-                  label="Volume das Gotas"
-                  value={config.waxScale}
-                  min={0.55}
-                  max={1.45}
-                  step={0.01}
-                  displayValue={`${Math.round(config.waxScale * 100)}%`}
-                  onChange={(v) => onUpdate('waxScale', v)}
-                  onCommit={onCommitHistory}
-                />
-                <SliderControl
-                  label="Viscosidade e Fusão"
-                  value={config.viscosity}
-                  min={0.04}
-                  max={0.4}
-                  step={0.005}
-                  onChange={(v) => onUpdate('viscosity', v)}
-                  onCommit={onCommitHistory}
-                />
-                <SliderControl
-                  label="Velocidade Térmica"
-                  value={config.flowSpeed}
-                  min={0}
-                  max={2.4}
-                  step={0.02}
-                  displayValue={`${config.flowSpeed.toFixed(2)}x`}
-                  onChange={(v) => onUpdate('flowSpeed', v)}
-                  onCommit={onCommitHistory}
-                />
-              </SectionBlock>
-
-              <SectionBlock title="Detalhes Internos e Vidro">
-                <SliderControl
-                  label="Organicidade da Cera"
-                  value={config.turbulence}
-                  min={0}
-                  max={0.65}
-                  step={0.01}
-                  displayValue={`${Math.round((config.turbulence / 0.65) * 100)}%`}
-                  onChange={(v) => onUpdate('turbulence', v)}
-                  onCommit={onCommitHistory}
-                />
-                <SliderControl
-                  label="Microbolhas e Glitter Suspenso"
-                  value={config.particles}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  displayValue={`${Math.round(config.particles * 100)}%`}
-                  onChange={(v) => onUpdate('particles', v)}
-                  onCommit={onCommitHistory}
-                />
-                <SliderControl
-                  label="Refração e Brilho do Vidro"
-                  value={config.glassRefraction}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  displayValue={`${Math.round(config.glassRefraction * 100)}%`}
-                  onChange={(v) => onUpdate('glassRefraction', v)}
-                  onCommit={onCommitHistory}
-                />
-                <SliderControl
-                  label="Densidade do Líquido"
-                  value={config.liquidDensity}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  displayValue={`${Math.round(config.liquidDensity * 100)}%`}
-                  onChange={(v) => onUpdate('liquidDensity', v)}
-                  onCommit={onCommitHistory}
-                />
-              </SectionBlock>
-            </>
-          )}
-
-          {activeTab === 'cores' && (
-            <>
-              <SectionBlock title="Paletas Curadas">
-                <div className="grid grid-cols-2 gap-1.5">
-                  {CURATED_PALETTES.map((pal) => (
-                    <button
-                      key={pal.name}
-                      type="button"
-                      onClick={() => {
-                        onBatchUpdate({
-                          waxColorHot: pal.waxColorHot,
-                          waxColorCool: pal.waxColorCool,
-                          liquidColor: pal.liquidColor,
-                          liquidDensity: pal.liquidDensity,
-                        });
-                      }}
-                      className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg bg-[#F6F6F9] dark:bg-[#0B0B0E] border border-black/[0.06] dark:border-white/[0.06] hover:border-black/[0.16] dark:hover:border-white/[0.16] transition-colors text-left cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]"
-                    >
-                      <span className="text-[11.5px] font-medium text-[#2A2A36] dark:text-[#D8D8E4] truncate">
-                        {pal.name}
-                      </span>
-                      <span className="flex items-center gap-0.5 shrink-0" aria-hidden="true">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full border border-black/15"
-                          style={{ backgroundColor: pal.waxColorHot }}
-                        />
-                        <span
-                          className="w-2.5 h-2.5 rounded-full border border-black/15"
-                          style={{ backgroundColor: pal.waxColorCool }}
-                        />
-                        <span
-                          className="w-2.5 h-2.5 rounded-full border border-black/15"
-                          style={{ backgroundColor: pal.liquidColor }}
-                        />
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </SectionBlock>
-
-              <SectionBlock title="Cores da Cera e Líquido">
-                <ColorControl
-                  label="Cera Quente (Base)"
-                  value={config.waxColorHot}
-                  onChange={(hex) => onUpdate('waxColorHot', hex)}
-                />
-                <ColorControl
-                  label="Cera Fria (Topo)"
-                  value={config.waxColorCool}
-                  onChange={(hex) => onUpdate('waxColorCool', hex)}
-                />
-                <ColorControl
-                  label="Cor do Líquido"
-                  value={config.liquidColor}
-                  onChange={(hex) => onUpdate('liquidColor', hex)}
-                />
-                <SliderControl
-                  label="Transparência / Densidade"
-                  value={config.liquidDensity}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  displayValue={`${Math.round(config.liquidDensity * 100)}%`}
-                  onChange={(v) => onUpdate('liquidDensity', v)}
-                  onCommit={onCommitHistory}
-                />
-              </SectionBlock>
-
-              <SectionBlock title="Ajuste Cromático">
-                <SliderControl
-                  label="Saturação"
-                  value={config.saturation}
-                  min={0.4}
-                  max={1.6}
-                  step={0.02}
-                  displayValue={`${Math.round(config.saturation * 100)}%`}
-                  onChange={(v) => onUpdate('saturation', v)}
-                  onCommit={onCommitHistory}
-                />
-                <SliderControl
-                  label="Contraste"
-                  value={config.contrast}
-                  min={0.7}
-                  max={1.5}
-                  step={0.02}
-                  displayValue={`${Math.round(config.contrast * 100)}%`}
-                  onChange={(v) => onUpdate('contrast', v)}
-                  onCommit={onCommitHistory}
-                />
-              </SectionBlock>
-            </>
-          )}
-
-          {activeTab === 'cena' && (
-            <>
-              <SectionBlock title="Fundo Infinito">
-                <div className="space-y-1.5">
-                  <div className="text-[12px] text-[#3C3C48] dark:text-[#B6B6C2] font-medium">
-                    Modo do Fundo
-                  </div>
-                  <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-[#EAEBF0] dark:bg-[#0A0A0C] border border-black/[0.06] dark:border-white/[0.06]">
-                    {(
-                      [
-                        { value: 'light', label: 'Modo Claro', Icon: Sun },
-                        { value: 'dark', label: 'Modo Escuro', Icon: Moon },
-                      ] as const
-                    ).map(({ value, label, Icon }) => {
-                      const active = config.bgMode === value;
-                      return (
-                        <button
-                          key={value}
-                          type="button"
-                          onClick={() => {
-                            onUpdate('bgMode', value as BackgroundMode);
-                            onCommitHistory();
-                          }}
-                          className={`inline-flex items-center justify-center gap-1.5 px-2.5 py-2 text-[12px] font-medium rounded-md transition-colors duration-150 whitespace-nowrap cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35] ${
-                            active
-                              ? 'bg-white dark:bg-[#222229] text-[#14141A] dark:text-[#F4F4F6] shadow-xs dark:shadow-none'
-                              : 'text-[#626272] dark:text-[#848494] hover:text-[#14141A] dark:hover:text-[#D4D4DE]'
-                          }`}
-                        >
-                          <Icon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                          <span>{label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <SliderControl
-                  label="Luminosidade do Fundo"
-                  value={config.bgLuminance}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  displayValue={`${Math.round(config.bgLuminance * 100)}%`}
-                  onChange={(v) => onUpdate('bgLuminance', v)}
-                  onCommit={onCommitHistory}
-                />
-
-                {config.vesselShape !== 'fluid' && (
-                  <>
-                    <SliderControl
-                      label="Sombra de Estúdio"
-                      value={config.studioShadow}
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      displayValue={`${Math.round(config.studioShadow * 100)}%`}
-                      onChange={(v) => onUpdate('studioShadow', v)}
-                      onCommit={onCommitHistory}
-                    />
-                    <SliderControl
-                      label="Reflexo no Chão"
-                      value={config.floorReflection}
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      displayValue={`${Math.round(config.floorReflection * 100)}%`}
-                      onChange={(v) => onUpdate('floorReflection', v)}
-                      onCommit={onCommitHistory}
-                    />
-                  </>
-                )}
-
-                <SliderControl
-                  label="Granulação Fotográfica"
-                  value={config.filmGrain}
-                  min={0}
-                  max={0.4}
-                  step={0.01}
-                  displayValue={`${Math.round((config.filmGrain / 0.4) * 100)}%`}
-                  onChange={(v) => onUpdate('filmGrain', v)}
-                  onCommit={onCommitHistory}
-                />
-              </SectionBlock>
-
-              <SectionBlock title="Iluminação Interna">
-                <SliderControl
-                  label="Incandescência da Base"
-                  value={config.bottomGlow}
-                  min={0}
-                  max={1.8}
-                  step={0.02}
-                  displayValue={`${Math.round(config.bottomGlow * 100)}%`}
-                  onChange={(v) => onUpdate('bottomGlow', v)}
-                  onCommit={onCommitHistory}
-                />
-                <SliderControl
-                  label="Translucidez da Cera"
-                  value={config.subsurface}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  displayValue={`${Math.round(config.subsurface * 100)}%`}
-                  onChange={(v) => onUpdate('subsurface', v)}
-                  onCommit={onCommitHistory}
-                />
-                <SliderControl
-                  label="Halo Luminoso (Bloom)"
-                  value={config.bloom}
-                  min={0}
-                  max={1.1}
-                  step={0.01}
-                  displayValue={`${Math.round(config.bloom * 100)}%`}
-                  onChange={(v) => onUpdate('bloom', v)}
-                  onCommit={onCommitHistory}
-                />
-              </SectionBlock>
-            </>
-          )}
+          <InspectorControlsBody
+            config={config}
+            activeTab={activeTab}
+            onUpdate={onUpdate}
+            onBatchUpdate={onBatchUpdate}
+            onCommitHistory={onCommitHistory}
+            isTouchSheet={false}
+          />
         </div>
       </div>
     </aside>
