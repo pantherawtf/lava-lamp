@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import { CURATED_PALETTES } from '../data/presets';
+import { MAX_BLOBS } from '../engine/physics';
 import type {
   BackgroundMode,
   InspectorTab,
@@ -295,7 +296,7 @@ export const InspectorControlsBody: React.FC<InspectorControlsBodyProps> = ({
               label="Quantidade de Gotas"
               value={config.blobCount}
               min={1}
-              max={14}
+              max={MAX_BLOBS}
               step={1}
               onChange={(v) => onUpdate('blobCount', Math.round(v))}
               onCommit={onCommitHistory}
@@ -587,7 +588,7 @@ export const InspectorControlsBody: React.FC<InspectorControlsBodyProps> = ({
               label="Halo Luminoso (Bloom)"
               value={config.bloom}
               min={0}
-              max={1.1}
+              max={1}
               step={0.01}
               displayValue={`${Math.round(config.bloom * 100)}%`}
               onChange={(v) => onUpdate('bloom', v)}

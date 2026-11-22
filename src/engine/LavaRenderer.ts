@@ -181,7 +181,7 @@ export class LavaRenderer {
     gl.uniform1f(u.uFloorReflection, config.floorReflection);
     gl.uniform1f(u.uStudioShadow, config.studioShadow);
 
-    gl.uniform1i(u.uBlobCount, config.blobCount);
+    gl.uniform1i(u.uBlobCount, Math.max(1, Math.min(9, config.blobCount)));
     gl.uniform4fv(u.uBlobs, blobData);
     gl.uniform1f(u.uViscosity, config.viscosity);
     gl.uniform1f(u.uTurbulence, config.turbulence);
@@ -200,7 +200,7 @@ export class LavaRenderer {
     gl.uniform1f(u.uBgLuminance, config.bgLuminance);
     gl.uniform1f(u.uBottomGlow, config.bottomGlow);
     gl.uniform1f(u.uSubsurface, config.subsurface);
-    gl.uniform1f(u.uBloom, config.bloom);
+    gl.uniform1f(u.uBloom, config.bloom * 1.96);
     gl.uniform1f(u.uSaturation, config.saturation);
     gl.uniform1f(u.uContrast, config.contrast);
     gl.uniform1f(u.uFilmGrain, config.filmGrain);

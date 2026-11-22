@@ -36,7 +36,7 @@ uniform float uStudioShadow;
 
 // Fluid & Wax
 uniform int uBlobCount;
-uniform vec4 uBlobs[14];
+uniform vec4 uBlobs[9];
 uniform float uViscosity;
 uniform float uTurbulence;
 uniform float uParticles;
@@ -261,10 +261,10 @@ float mapWax(vec3 p) {
   float gMax = vesselGlassYMax(uVesselShape);
   float gSpan = gMax - gMin;
   float w = uWidthRatio;
-  float k = max(0.035, uViscosity * 0.92);
+  float k = max(0.025, uViscosity * 0.56);
 
   float d = 1e4;
-  for (int i = 0; i < 14; i++) {
+  for (int i = 0; i < 9; i++) {
     if (i >= uBlobCount) break;
     vec4 b = uBlobs[i];
     if (b.w <= 0.001) continue;
@@ -292,11 +292,11 @@ float mapWax(vec3 p) {
 
   // Heated molten wax pool resting on bottom bulb (for physical vessels)
   if (uVesselShape != 4) {
-    float poolR = vesselRadius(uVesselShape, gMin + 0.02) * 0.86;
-    vec3 qp = p - vec3(sin(uTime * 0.55) * 0.02, gMin + 0.015, cos(uTime * 0.48) * 0.02);
-    qp.y *= 2.4;
+    float poolR = vesselRadius(uVesselShape, gMin + 0.02) * 0.84;
+    vec3 qp = p - vec3(sin(uTime * 0.55) * 0.02, gMin + 0.014, cos(uTime * 0.48) * 0.02);
+    qp.y *= 2.45;
     float dPool = length(qp) - poolR;
-    d = smin(d, dPool, k * 1.15);
+    d = smin(d, dPool, k * 0.85);
   }
 
   // Fast organic surface turbulence

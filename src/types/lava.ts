@@ -91,4 +91,10 @@ export interface BlobState {
   temp: number; // 0 = cool (sinks), 1 = hot (rises)
   phase: number;
   driftFreq: number;
+  thermalRate: number;
+  buoyancyBias: number;
+  orbitRadius: number;
+  orbitSign: number;
+  wanderSeed: number;
+  counterRole: boolean;
 }

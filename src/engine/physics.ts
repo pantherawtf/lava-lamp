@@ -1,6 +1,13 @@
 import type { BlobState, LavaConfig, VesselShape } from '../types/lava';
 
-export const MAX_BLOBS = 14;
+export const MAX_BLOBS = 9;
+
+// Stratified vertical slots spanning bottom-to-top so ANY active count (1..9, including default 4)
+// starts moderately spaced across the full chamber with natural pair-forming potential
+const STRATIFIED_Y = [-0.24, 0.25, 0.03, -0.09, 0.33, -0.33, 0.16, -0.17, 0.09];
+
+// Guarantees >= 33% (33%..50%) of active blobs act as organic counter-current swayers for every count 2..9
+const COUNTER_ROLE_MASK = [false, true, false, true, false, false, true, false, false];
 
 export interface WaxHitResult {
   /** Hit point in physics wax coordinate space */
@@ -113,6 +120,7 @@ export class LavaPhysics {
   public blobs: BlobState[] = [];
   public time = 0;
   private uniformBuffer = new Float32Array(MAX_BLOBS * 4);
+  private pairContact = new Float32Array(MAX_BLOBS * MAX_BLOBS);
 
   constructor(seed = 1337) {
     this.reset(seed);
@@ -121,45 +129,73 @@ export class LavaPhysics {
   public reset(seed = Math.floor(Math.random() * 100000)): void {
     this.time = 0;
     this.blobs = [];
+    this.pairContact.fill(0);
     let s = seed >>> 0;
     const rand = () => {
       s = (1664525 * s + 1013904223) >>> 0;
       return s / 4294967296;
     };
 
+    const baseAngleOffset = rand() * Math.PI * 2;
+
     for (let i = 0; i < MAX_BLOBS; i++) {
-      const baseRadius = 0.068 + rand() * 0.072;
-      // Distribute nicely from bottom pool to top so initial frame immediately looks iconic
-      const t = i / (MAX_BLOBS - 1);
-      const y = -0.34 + t * 0.68 + (rand() - 0.5) * 0.1;
-      const angle = rand() * Math.PI * 2;
-      const radial = rand() * 0.085;
+      const baseRadius = 0.068 + rand() * 0.056;
+      const y = clamp(STRATIFIED_Y[i] + (rand() - 0.5) * 0.065, -0.35, 0.34);
+      const angle = baseAngleOffset + i * 2.39996 + (rand() - 0.5) * 0.45;
+      const orbitRadius = 0.052 + (i % 3) * 0.022 + rand() * 0.018;
+      const radial = orbitRadius * (0.78 + rand() * 0.35);
+      const counterRole = COUNTER_ROLE_MASK[i] ?? i % 3 === 1;
+
+      // Alternate hot/cool temperatures by vertical band & counter role so blobs immediately move in opposing currents
+      const baseTemp =
+        y < -0.12
+          ? 0.7 + rand() * 0.24
+          : y > 0.12
+            ? 0.12 + rand() * 0.24
+            : counterRole
+              ? 0.22 + rand() * 0.22
+              : 0.58 + rand() * 0.24;
+
       this.blobs.push({
         x: Math.cos(angle) * radial,
         y,
-        z: Math.sin(angle) * radial * 0.7,
-        vx: 0,
-        vy: (rand() - 0.5) * 0.05,
-        vz: 0,
+        z: Math.sin(angle) * radial * 0.78,
+        vx: (rand() - 0.5) * 0.06,
+        vy: (baseTemp - 0.5) * 0.12,
+        vz: (rand() - 0.5) * 0.05,
         radius: baseRadius,
         baseRadius,
-        temp: y < 0 ? 0.65 + rand() * 0.35 : rand() * 0.45,
+        temp: clamp(baseTemp, 0.08, 0.94),
         phase: rand() * Math.PI * 2,
-        driftFreq: 0.4 + rand() * 0.7,
+        driftFreq: 0.34 + rand() * 0.58,
+        thermalRate: 0.72 + rand() * 0.62,
+        buoyancyBias: (rand() - 0.5) * 0.085,
+        orbitRadius,
+        orbitSign: counterRole ? -1 : i % 2 === 0 ? 1 : -1,
+        wanderSeed: rand() * Math.PI * 2,
+        counterRole,
       });
     }
   }
 
-  public cloneState(): { time: number; blobs: BlobState[] } {
+  public cloneState(): { time: number; blobs: BlobState[]; pairContact: number[] } {
     return {
       time: this.time,
       blobs: this.blobs.map((b) => ({ ...b })),
+      pairContact: Array.from(this.pairContact),
     };
   }
 
-  public loadState(state: { time: number; blobs: BlobState[] }): void {
+  public loadState(state: { time: number; blobs: BlobState[]; pairContact?: number[] }): void {
     this.time = state.time;
     this.blobs = state.blobs.map((b) => ({ ...b }));
+    this.pairContact.fill(0);
+    if (state.pairContact) {
+      const len = Math.min(this.pairContact.length, state.pairContact.length);
+      for (let i = 0; i < len; i++) {
+        this.pairContact[i] = state.pairContact[i];
+      }
+    }
   }
 
   /**
@@ -282,7 +318,7 @@ export class LavaPhysics {
     const gMin = vesselGlassYMin(shape);
     const gMax = vesselGlassYMax(shape);
     const gSpan = gMax - gMin;
-    const k = Math.max(0.035, config.viscosity * 0.92);
+    const k = Math.max(0.025, config.viscosity * 0.56);
     const activeCount = Math.max(1, Math.min(config.blobCount, this.blobs.length));
 
     // Precompute mapped blob centers in lamp-local space (matches shader mapWax)
@@ -318,12 +354,12 @@ export class LavaPhysics {
         d = smin(d, sd, k);
       }
       if (shape !== 'fluid') {
-        const poolR = vesselRadiusCpu(shape, gMin + 0.02, w) * 0.86;
+        const poolR = vesselRadiusCpu(shape, gMin + 0.02, w) * 0.84;
         const qpx = px - Math.sin(this.time * 0.55) * 0.02;
-        const qpy = (py - (gMin + 0.015)) * 2.4;
+        const qpy = (py - (gMin + 0.014)) * 2.45;
         const qpz = pz - Math.cos(this.time * 0.48) * 0.02;
         const dPool = Math.hypot(qpx, qpy, qpz) - poolR;
-        d = smin(d, dPool, k * 1.15);
+        d = smin(d, dPool, k * 0.85);
 
         const innerWall = vesselRadiusCpu(shape, clamp(py, gMin, gMax), w) - 0.016;
         const dWall = Math.hypot(px, pz) - innerWall;
@@ -445,16 +481,23 @@ export class LavaPhysics {
     const dirY = hit.physY > 0.18 ? -0.75 : 0.85;
 
     // Spawn daughter blob overlapping the tapped point and kick it gently apart
-    child.x = clamp(hit.physX + dirX * 0.028, -0.13, 0.13);
-    child.y = clamp(hit.physY + dirY * 0.032, -0.36, 0.34);
-    child.z = clamp(hit.physZ + dirZ * 0.022, -0.1, 0.1);
-    child.vx = dirX * 0.34;
-    child.vy = dirY * 0.42;
-    child.vz = dirZ * 0.24;
-    child.baseRadius = 0.068 + ((newIndex * 37) % 100) * 0.00052;
+    child.x = clamp(hit.physX + dirX * 0.036, -0.14, 0.14);
+    child.y = clamp(hit.physY + dirY * 0.038, -0.36, 0.34);
+    child.z = clamp(hit.physZ + dirZ * 0.026, -0.11, 0.11);
+    child.vx = dirX * 0.36;
+    child.vy = dirY * 0.44;
+    child.vz = dirZ * 0.26;
+    child.baseRadius = 0.068 + ((newIndex * 37) % 100) * 0.00048;
     child.radius = child.baseRadius * waxScale;
-    child.temp = dirY > 0 ? 0.82 : 0.28;
+    child.temp = dirY > 0 ? 0.82 : 0.24;
     child.phase = angle;
+    child.counterRole = COUNTER_ROLE_MASK[newIndex] ?? newIndex % 3 === 1;
+
+    // Reset contact dwell for the newly split blob so it separates cleanly
+    for (let k = 0; k < MAX_BLOBS; k++) {
+      this.pairContact[newIndex * MAX_BLOBS + k] = 0;
+      this.pairContact[k * MAX_BLOBS + newIndex] = 0;
+    }
 
     // Subtle opposite recoil on parent blob so the split feels genuinely elastic
     if (parent && parent !== child) {
@@ -465,9 +508,10 @@ export class LavaPhysics {
   }
 
   /**
-   * Resets cleanly back to 1 iconic molten wax drop after reaching max blob count (14 -> 1)
+   * Resets cleanly back to 1 iconic molten wax drop after reaching max blob count (9 -> 1)
    */
   public coalesceToSingleBlob(hit: WaxHitResult, waxScale: number): void {
+    this.pairContact.fill(0);
     const primary = this.blobs[0];
     primary.x = clamp(hit.physX * 0.45, -0.06, 0.06);
     primary.y = clamp(hit.physY, -0.22, 0.22);
@@ -475,7 +519,7 @@ export class LavaPhysics {
     primary.vx = (hit.physX >= 0 ? -1 : 1) * 0.14;
     primary.vy = hit.physY > 0 ? -0.26 : 0.34;
     primary.vz = 0;
-    primary.baseRadius = 0.122;
+    primary.baseRadius = 0.118;
     primary.radius = primary.baseRadius * waxScale;
     primary.temp = hit.physY > 0 ? 0.24 : 0.82;
   }
@@ -512,16 +556,20 @@ export class LavaPhysics {
       const oppZ = refZ >= 0 ? -1 : 1;
       const oppY = refY >= 0 ? -1 : 1;
 
-      // Surge toward the opposite side of the glass chamber
-      b.vx = b.vx * 0.15 + oppX * (0.48 + Math.abs(b.x) * 1.6);
-      b.vz = b.vz * 0.15 + oppZ * (0.32 + Math.abs(b.z) * 1.2);
-      b.vy = b.vy * 0.15 + oppY * (0.58 + Math.abs(b.y) * 0.9);
+      // Gently glide toward the opposite side with a slight curved arc so drops flow smoothly past each other
+      const curveX = -refZ * b.orbitSign * 0.45;
+      const curveZ = refX * b.orbitSign * 0.45;
 
-      // Invert thermal buoyancy so rising drops cool & sink, and pooled drops heat & rise
-      b.temp = oppY > 0 ? Math.min(1.0, Math.max(b.temp, 0.88)) : Math.max(0.0, Math.min(b.temp, 0.12));
+      b.vx = clamp(b.vx * 0.45 + oppX * (0.13 + Math.abs(b.x) * 0.34) + curveX, -0.3, 0.3);
+      b.vz = clamp(b.vz * 0.45 + oppZ * (0.095 + Math.abs(b.z) * 0.26) + curveZ, -0.24, 0.24);
+      b.vy = clamp(b.vy * 0.45 + oppY * (0.15 + Math.abs(b.y) * 0.26), -0.32, 0.32);
 
-      // Reverse convection swirl phase so ongoing currents reinforce the opposite sweep
-      b.phase += Math.PI;
+      // Softly nudge thermal buoyancy instead of abruptly snapping to extremes
+      const targetTemp = oppY > 0 ? 0.72 : 0.28;
+      b.temp = clamp(mix(b.temp, targetTemp, 0.52), 0.14, 0.86);
+
+      // Staggered phase shift keeps the sweep fluid and desynchronized
+      b.phase += 1.25 + (i % 3) * 0.32;
     }
   }
 
@@ -529,60 +577,189 @@ export class LavaPhysics {
     const clampedDt = Math.min(dt, 0.05) * Math.max(0, speed);
     this.time += clampedDt;
 
-    const bottomY = -0.4;
-    const topY = 0.39;
+    const count = Math.max(1, Math.min(activeCount, MAX_BLOBS));
+    const bottomY = -0.39;
+    const topY = 0.38;
 
+    // 1. Individual desynchronized thermal convection + aperiodic 3D lane wandering
     for (let i = 0; i < MAX_BLOBS; i++) {
       const b = this.blobs[i];
+      const t1 = this.time * b.driftFreq * 0.52 + b.phase;
+      const t2 = this.time * (b.driftFreq * 0.31 + 0.17) + b.wanderSeed;
+      const aperiodicWave = Math.sin(t1) * Math.cos(t2 * 0.83) + 0.45 * Math.sin(t2 * 1.41 + i);
 
-      // Heat near bottom bulb, cool near top cap
-      if (b.y < -0.22) {
-        const heatRate = (0.34 + 0.16 * Math.sin(this.time * 0.6 + b.phase)) * (-0.22 - b.y + 0.18);
-        b.temp = Math.min(1.0, b.temp + heatRate * clampedDt * 1.45);
-      } else if (b.y > 0.22) {
-        const coolRate = (0.32 + 0.14 * Math.cos(this.time * 0.5 + b.phase)) * (b.y - 0.22 + 0.18);
-        b.temp = Math.max(0.0, b.temp - coolRate * clampedDt * 1.35);
+      // Desynchronized heating near bottom bulb & cooling near top cap
+      if (b.y < -0.19) {
+        const heatRate =
+          (0.32 + 0.18 * (0.5 + 0.5 * aperiodicWave)) * b.thermalRate * (-0.19 - b.y + 0.19);
+        b.temp = Math.min(1.0, b.temp + heatRate * clampedDt * 1.38);
+      } else if (b.y > 0.19) {
+        const coolRate =
+          (0.3 + 0.16 * (0.5 - 0.5 * aperiodicWave)) * b.thermalRate * (b.y - 0.19 + 0.19);
+        b.temp = Math.max(0.0, b.temp - coolRate * clampedDt * 1.32);
       } else {
-        // Subtle ambient drift in middle
-        b.temp += Math.sin(this.time * 0.45 + b.phase) * 0.03 * clampedDt;
-        b.temp = Math.min(1.0, Math.max(0.0, b.temp));
+        // Gentle mid-vessel thermal wander so drops occasionally turn mid-height like real lava wax
+        const midDrift = (0.055 * aperiodicWave + (b.counterRole ? Math.cos(t2 * 1.2) * 0.045 : 0)) * b.thermalRate;
+        b.temp = clamp(b.temp + midDrift * clampedDt, 0.05, 0.95);
       }
 
-      // Buoyancy force from temperature
-      const buoyancy = (b.temp - 0.5) * 0.42;
-      b.vy += buoyancy * clampedDt;
+      // Buoyancy force from individual temperature & neutral point
+      const buoyancy = (b.temp - (0.5 + b.buoyancyBias)) * 0.39;
+      b.vy += (buoyancy + Math.sin(t2 * 0.95 + b.phase) * 0.032) * clampedDt;
 
-      // Gentle swirling convection currents in X/Z
-      const swirlX = Math.sin(this.time * b.driftFreq + b.phase + b.y * 3.0) * 0.075;
-      const swirlZ = Math.cos(this.time * b.driftFreq * 0.85 + b.phase * 1.3 - b.y * 2.5) * 0.055;
-      b.vx += (swirlX - b.x * 0.45) * clampedDt;
-      b.vz += (swirlZ - b.z * 0.55) * clampedDt;
+      // Preferred lateral 3D lane so drops spread organically across the vessel instead of stacking at x=0
+      const maxR = Math.max(0.068, 0.158 - (b.y + 0.4) * 0.068);
+      const laneR = Math.min(maxR * 0.86, b.orbitRadius * (0.74 + 0.36 * Math.sin(t2 * 0.78)));
+      const orbitAngle = b.orbitSign * (t1 * 0.62 + 0.68 * Math.sin(t2 * 0.72) + b.y * 2.1);
+      const targetX = Math.cos(orbitAngle) * laneR;
+      const targetZ = Math.sin(orbitAngle) * laneR * 0.8;
 
-      // Soft repulsion between active blobs so they don't collapse into one point forever
-      for (let j = i + 1; j < activeCount; j++) {
+      const wanderX = Math.sin(t1 * 1.27 + b.y * 3.4) * 0.052 + Math.cos(t2 * 1.63) * 0.036;
+      const wanderZ = Math.cos(t1 * 1.13 - b.y * 2.8) * 0.044 + Math.sin(t2 * 1.49) * 0.03;
+
+      b.vx += ((targetX - b.x) * 0.38 + wanderX) * clampedDt;
+      b.vz += ((targetZ - b.z) * 0.42 + wanderZ) * clampedDt;
+    }
+
+    // 2. Organic counter-current swaying (~33%..50% of active drops sway gently against nearby peers)
+    for (let i = 0; i < count; i++) {
+      const b = this.blobs[i];
+      if (!b.counterRole) continue;
+
+      let weightSum = 0;
+      let peerVx = 0;
+      let peerVy = 0;
+      let peerVz = 0;
+      let peerX = 0;
+      let peerY = 0;
+      let peerZ = 0;
+
+      for (let j = 0; j < count; j++) {
+        if (i === j) continue;
         const o = this.blobs[j];
-        const dx = b.x - o.x;
-        const dy = b.y - o.y;
-        const dz = b.z - o.z;
-        const d2 = dx * dx + dy * dy + dz * dz + 0.002;
-        const minD = (b.baseRadius + o.baseRadius) * 0.72;
-        if (d2 < minD * minD) {
-          const d = Math.sqrt(d2);
-          const push = ((minD - d) / minD) * 0.09 * clampedDt;
-          const nx = dx / d;
-          const ny = dy / d;
-          const nz = dz / d;
-          b.vx += nx * push;
-          b.vy += ny * push * 0.45;
-          b.vz += nz * push;
-          o.vx -= nx * push;
-          o.vy -= ny * push * 0.45;
-          o.vz -= nz * push;
+        const dx = o.x - b.x;
+        const dy = o.y - b.y;
+        const dz = o.z - b.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist < 0.42) {
+          const w = 1 - dist / 0.42;
+          weightSum += w;
+          peerVx += o.vx * w;
+          peerVy += o.vy * w;
+          peerVz += o.vz * w;
+          peerX += o.x * w;
+          peerY += o.y * w;
+          peerZ += o.z * w;
         }
       }
 
-      // Viscous drag
-      const drag = Math.exp(-2.1 * clampedDt);
+      if (weightSum > 0.001) {
+        const invW = 1 / weightSum;
+        peerVx *= invW;
+        peerVy *= invW;
+        peerVz *= invW;
+        peerX *= invW;
+        peerY *= invW;
+        peerZ *= invW;
+
+        // Smooth harmonic sway perpendicular to neighbor axis + gentle opposing counter-current
+        const swayWave = Math.sin(this.time * (0.95 + b.driftFreq * 0.5) + b.phase);
+        const relX = b.x - peerX;
+        const relY = b.y - peerY;
+        const relZ = b.z - peerZ;
+        const relLen = Math.hypot(relX, relZ) + 0.04;
+        const perpX = -relZ / relLen;
+        const perpZ = relX / relLen;
+
+        b.vx += (-peerVx * 0.34 + perpX * swayWave * 0.095) * clampedDt;
+        b.vy += (-peerVy * 0.24 + Math.cos(this.time * 0.85 + b.wanderSeed) * 0.042) * clampedDt;
+        b.vz += (-peerVz * 0.34 + perpZ * swayWave * 0.075) * clampedDt;
+
+        // Subtle opposing thermal lean when locked at nearly the same height as peers
+        if (Math.abs(relY) < 0.14) {
+          const thermalPush = (relY >= 0 ? 1 : -1) * 0.075;
+          b.temp = clamp(b.temp + thermalPush * clampedDt, 0.06, 0.94);
+        }
+      }
+    }
+
+    // 3. Pairwise moderate spacing + "kiss and quick separate" elastic dynamics
+    for (let i = 0; i < count; i++) {
+      const b = this.blobs[i];
+      for (let j = i + 1; j < count; j++) {
+        const o = this.blobs[j];
+        const pairIdx = i * MAX_BLOBS + j;
+        const dx = b.x - o.x;
+        const dy = b.y - o.y;
+        const dz = b.z - o.z;
+        const d2 = dx * dx + dy * dy + dz * dz + 0.0008;
+        const d = Math.sqrt(d2);
+
+        const sumR = Math.max(0.08, b.radius + o.radius);
+        // Moderate comfort zone keeps natural spacing while still welcoming occasional close pairs
+        const comfortD = Math.max(0.19, sumR * 2.15);
+        // Visual metaball fusion/kiss threshold
+        const kissD = Math.max(0.122, sumR * 1.48);
+
+        if (d < comfortD) {
+          const nx = dx / d;
+          const ny = dy / d;
+          const nz = dz / d;
+
+          // Gentle comfort spacing (lateral-biased so pairs glide past rather than stacking vertically)
+          const comfortOverlap = (comfortD - d) / comfortD;
+          const softPush = comfortOverlap * 0.065 * clampedDt;
+          b.vx += nx * softPush;
+          b.vy += ny * softPush * 0.55;
+          b.vz += nz * softPush;
+          o.vx -= nx * softPush;
+          o.vy -= ny * softPush * 0.55;
+          o.vz -= nz * softPush;
+
+          if (d < kissD) {
+            // Brief silky merge upon contact, then rapidly escalating separation + tangential glide
+            const dwell = Math.min(1.6, this.pairContact[pairIdx] + clampedDt * 1.5);
+            this.pairContact[pairIdx] = dwell;
+
+            const kissOverlap = (kissD - d) / kissD;
+            // Light during initial brief kiss (<0.22), strong and silky right after so drops never stay glued
+            const releaseRamp = smoothstep(0.14, 0.72, dwell);
+            const sepPush = (0.14 + releaseRamp * 0.68 + kissOverlap * 0.28) * clampedDt;
+
+            // Smooth tangential swirl so drops roll and peel off each other organically
+            const swirlDir = (i + j) % 2 === 0 ? 1 : -1;
+            const xzLen = Math.hypot(nx, nz) + 0.05;
+            const tx = (-nz / xzLen) * swirlDir;
+            const tz = (nx / xzLen) * swirlDir;
+            const shear = (0.065 + releaseRamp * 0.14) * clampedDt;
+
+            b.vx += nx * sepPush + tx * shear;
+            b.vy += ny * sepPush * 0.85;
+            b.vz += nz * sepPush + tz * shear;
+            o.vx -= nx * sepPush + tx * shear;
+            o.vy -= ny * sepPush * 0.85;
+            o.vz -= nz * sepPush + tz * shear;
+
+            // Slight opposite thermal nudge helps one rise and the other drift lower after kissing
+            if (releaseRamp > 0.15) {
+              const tempSign = b.y >= o.y ? 1 : -1;
+              const tempSplit = tempSign * 0.14 * releaseRamp * clampedDt;
+              b.temp = clamp(b.temp + tempSplit, 0.06, 0.94);
+              o.temp = clamp(o.temp - tempSplit, 0.06, 0.94);
+            }
+          } else {
+            this.pairContact[pairIdx] = Math.max(0, this.pairContact[pairIdx] - clampedDt * 1.9);
+          }
+        } else {
+          this.pairContact[pairIdx] = Math.max(0, this.pairContact[pairIdx] - clampedDt * 2.2);
+        }
+      }
+    }
+
+    // 4. Integrate viscous drag, position, soft vessel bounds, and thermal breathing
+    const drag = Math.exp(-1.95 * clampedDt);
+    for (let i = 0; i < MAX_BLOBS; i++) {
+      const b = this.blobs[i];
       b.vx *= drag;
       b.vy *= drag;
       b.vz *= drag;
@@ -591,28 +768,28 @@ export class LavaPhysics {
       b.y += b.vy * clampedDt;
       b.z += b.vz * clampedDt;
 
-      // Keep inside glass vertical bounds
+      // Keep inside glass vertical bounds with soft cushion
       if (b.y < bottomY) {
         b.y = bottomY;
-        b.vy = Math.abs(b.vy) * 0.25;
+        b.vy = Math.abs(b.vy) * 0.3;
       } else if (b.y > topY) {
         b.y = topY;
-        b.vy = -Math.abs(b.vy) * 0.25;
+        b.vy = -Math.abs(b.vy) * 0.3;
       }
 
       // Taper radial constraint loosely matching conical vessels
-      const maxR = Math.max(0.06, 0.145 - (b.y + 0.4) * 0.065);
+      const maxR = Math.max(0.068, 0.158 - (b.y + 0.4) * 0.068);
       const rXZ = Math.hypot(b.x, b.z);
       if (rXZ > maxR) {
         const k = maxR / rXZ;
         b.x *= k;
         b.z *= k;
-        b.vx *= -0.25;
-        b.vz *= -0.25;
+        b.vx *= -0.28;
+        b.vz *= -0.28;
       }
 
       // Thermal expansion + subtle breathing pulse
-      const pulse = 1.0 + 0.08 * Math.sin(this.time * 1.1 + b.phase) + (b.temp - 0.5) * 0.14;
+      const pulse = 1.0 + 0.08 * Math.sin(this.time * 1.05 + b.phase) + (b.temp - 0.5) * 0.13;
       b.radius = b.baseRadius * waxScale * pulse;
     }
   }
