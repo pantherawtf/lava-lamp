@@ -860,7 +860,7 @@ vec2 distortUv(vec2 uv) {
 }
 
 vec4 sampleScene(vec2 uv) {
-  return texture(uSceneTex, clamp(uv, vec2(0.001), vec2(0.999)));
+  return textureLod(uSceneTex, clamp(uv, vec2(0.001), vec2(0.999)), 0.0);
 }
 
 void main() {
@@ -892,30 +892,32 @@ void main() {
     col += vec3(0.11, 0.12, 0.14) * ridgeSpec * uFlutedGlass * (0.4 + 0.6 * length(col));
   }
 
-  // Dual-radius Optical Bloom
+  // Soft optical bloom: blur comes from the scene mip chain, so the glow is continuous
+  // (no discrete ghost copies) and scales with output resolution.
   if (uBloom > 0.005) {
     vec2 texel = 1.0 / max(uResolution, vec2(1.0));
+    float resLod = max(log2(uResolution.y / 720.0), 0.0);
     vec3 bloomAccum = vec3(0.0);
     float weightSum = 0.0;
 
-    const vec2 dirs[8] = vec2[8](
-      vec2( 1.0,  0.0), vec2(-1.0,  0.0),
-      vec2( 0.0,  1.0), vec2( 0.0, -1.0),
-      vec2( 0.707,  0.707), vec2(-0.707,  0.707),
-      vec2( 0.707, -0.707), vec2(-0.707, -0.707)
-    );
-
-    for (int i = 0; i < 8; i++) {
-      vec3 c1 = sampleScene(uv + dirs[i] * texel * 10.0).rgb;
-      vec3 c2 = sampleScene(uv + dirs[i] * texel * 26.0).rgb;
-      float l1 = dot(c1, vec3(0.299, 0.587, 0.114));
-      float l2 = dot(c2, vec3(0.299, 0.587, 0.114));
-      bloomAccum += c1 * smoothstep(0.32, 1.05, l1) * 1.1;
-      bloomAccum += c2 * smoothstep(0.38, 1.1, l2) * 0.8;
-      weightSum += 1.9;
+    for (int i = 0; i < 5; i++) {
+      float lod = 2.0 + float(i) + resLod;
+      vec2 o = texel * exp2(lod) * 0.5;
+      vec3 c = textureLod(uSceneTex, uv, lod).rgb;
+      c += textureLod(uSceneTex, uv + vec2( o.x,  o.y), lod).rgb;
+      c += textureLod(uSceneTex, uv + vec2(-o.x,  o.y), lod).rgb;
+      c += textureLod(uSceneTex, uv + vec2( o.x, -o.y), lod).rgb;
+      c += textureLod(uSceneTex, uv + vec2(-o.x, -o.y), lod).rgb;
+      c *= 0.2;
+      float w = 1.0 / (1.0 + float(i) * 0.55);
+      bloomAccum += c * w;
+      weightSum += w;
     }
     bloomAccum /= weightSum;
-    col += bloomAccum * uBloom * 1.35;
+    // Keep only the bright part of the blurred image so shadows stay clean
+    float bl = dot(bloomAccum, vec3(0.299, 0.587, 0.114));
+    bloomAccum *= smoothstep(0.22, 0.85, bl);
+    col += bloomAccum * uBloom * 1.1;
     if (uTransparentBg == 1) {
       alpha = max(alpha, clamp(length(bloomAccum) * uBloom * 0.9, 0.0, 1.0));
     }
