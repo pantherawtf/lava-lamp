@@ -175,11 +175,22 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [handleUndo, handleRedo]);
 
+  const handleToggleBgMode = useCallback(() => {
+    const nextMode = configRef.current.bgMode === 'light' ? 'dark' : 'light';
+    const next: LavaConfig = { ...configRef.current, bgMode: nextMode };
+    setConfig(next);
+    pushHistory(next);
+  }, [pushHistory]);
+
   return (
     <div className="h-screen w-screen flex bg-[#F2F3F7] dark:bg-[#0A0A0C] text-[#14141A] dark:text-[#F4F4F6] overflow-hidden transition-colors duration-200">
       {/* Full-Height, Full-Width Studio Stage with Floating TopBar */}
       <div className="relative flex-1 min-w-0 h-full overflow-hidden">
-        <TopBar onOpenExport={() => setExportOpen(true)} />
+        <TopBar
+          bgMode={config.bgMode}
+          onToggleBgMode={handleToggleBgMode}
+          onOpenExport={() => setExportOpen(true)}
+        />
 
         <CanvasStage
           config={config}

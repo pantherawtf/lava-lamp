@@ -1,23 +1,64 @@
 import React from 'react';
-import { Download } from 'lucide-react';
+import { Download, Moon, Sun } from 'lucide-react';
+import type { BackgroundMode } from '../types/lava';
 
 interface TopBarProps {
+  bgMode: BackgroundMode;
+  onToggleBgMode: () => void;
   onOpenExport: () => void;
 }
 
-export const TopBar: React.FC<TopBarProps> = ({ onOpenExport }) => {
-  return (
-    <header className="pointer-events-none absolute top-0 left-0 right-0 z-20 h-16 px-6 flex items-center justify-between gap-8">
-      {/* Zone 1: Single-line brand wordmark */}
-      <a
-        href="#stage"
-        onClick={(e) => e.preventDefault()}
-        className="pointer-events-auto text-[18px] font-bold tracking-[-0.02em] text-[#14141A] dark:text-[#F4F4F6] whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35] rounded transition-colors duration-200"
-      >
-        Lumina
-      </a>
+export const TopBar: React.FC<TopBarProps> = ({
+  bgMode,
+  onToggleBgMode,
+  onOpenExport,
+}) => {
+  const isDark = bgMode === 'dark';
 
-      {/* Zone 3: Single primary CTA */}
+  return (
+    <header className="pointer-events-none absolute top-0 left-0 right-0 z-20 h-16 px-6 flex items-center justify-between gap-6">
+      {/* Left: Brand wordmark + quick Light/Dark background toggle */}
+      <div className="pointer-events-auto flex items-center gap-4 shrink-0">
+        <a
+          href="#stage"
+          onClick={(e) => e.preventDefault()}
+          className="text-[18px] font-bold tracking-[-0.02em] text-[#14141A] dark:text-[#F4F4F6] whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35] rounded transition-colors duration-200"
+        >
+          Lumina
+        </a>
+
+        <button
+          type="button"
+          role="switch"
+          aria-checked={isDark}
+          aria-label={isDark ? 'Fundo escuro ativo. Alternar para fundo claro' : 'Fundo claro ativo. Alternar para fundo escuro'}
+          title={isDark ? 'Mudar para fundo claro' : 'Mudar para fundo escuro'}
+          onClick={onToggleBgMode}
+          className="group inline-flex items-center gap-2 pl-1.5 pr-3 py-1 rounded-full bg-white/82 dark:bg-[#141419]/85 backdrop-blur-md border border-black/[0.09] dark:border-white/[0.11] shadow-[0_2px_10px_rgba(0,0,0,0.06)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.35)] hover:border-black/[0.18] dark:hover:border-white/[0.2] transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5C35]"
+        >
+          <span
+            aria-hidden="true"
+            className="relative w-10 h-5 rounded-full bg-black/[0.08] dark:bg-white/[0.12] transition-colors duration-200 flex items-center px-0.5"
+          >
+            <span
+              className={`w-4 h-4 rounded-full bg-white dark:bg-[#F4F4F6] text-[#14141A] shadow-xs flex items-center justify-center transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                isDark ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            >
+              {isDark ? (
+                <Moon className="w-2.5 h-2.5" />
+              ) : (
+                <Sun className="w-2.5 h-2.5" />
+              )}
+            </span>
+          </span>
+          <span className="text-[12px] font-medium text-[#2A2A36] dark:text-[#D8D8E4]">
+            {isDark ? 'Escuro' : 'Claro'}
+          </span>
+        </button>
+      </div>
+
+      {/* Right: Single primary CTA */}
       <div className="pointer-events-auto shrink-0">
         <button
           type="button"
