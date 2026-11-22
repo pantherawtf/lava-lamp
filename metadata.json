@@ -1,0 +1,6 @@
+{
+  "name": "Lumina — Estúdio Generativo de Lava Lamps",
+  "description": "Ferramenta visual interativa para criar, distorcer, randomizar e exportar composições generativas de lava lamps em alta resolução e vídeo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
