@@ -574,7 +574,26 @@ export class LavaPhysics {
   }
 
   public step(dt: number, speed: number, activeCount: number, waxScale: number): void {
-    const clampedDt = Math.min(dt, 0.05) * Math.max(0, speed);
+    // 0..1 normalized slider scale where 0.50 (50%) maps exactly to legacy 2.22x speed (factor = 4.44)
+    const effectiveSpeed = Math.max(0, speed) * 4.44;
+    const totalSimDt = Math.min(dt, 0.05) * effectiveSpeed;
+    if (totalSimDt <= 0) {
+      for (let i = 0; i < MAX_BLOBS; i++) {
+        const b = this.blobs[i];
+        const pulse = 1.0 + 0.08 * Math.sin(this.time * 1.05 + b.phase) + (b.temp - 0.5) * 0.13;
+        b.radius = b.baseRadius * waxScale * pulse;
+      }
+      return;
+    }
+
+    const subSteps = Math.min(6, Math.max(1, Math.ceil(totalSimDt / 0.045)));
+    const subDt = totalSimDt / subSteps;
+    for (let s = 0; s < subSteps; s++) {
+      this.stepSub(subDt, activeCount, waxScale);
+    }
+  }
+
+  private stepSub(clampedDt: number, activeCount: number, waxScale: number): void {
     this.time += clampedDt;
 
     const count = Math.max(1, Math.min(activeCount, MAX_BLOBS));

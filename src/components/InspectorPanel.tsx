@@ -324,9 +324,9 @@ export const InspectorControlsBody: React.FC<InspectorControlsBodyProps> = ({
               label="Velocidade Térmica"
               value={config.flowSpeed}
               min={0}
-              max={2.4}
-              step={0.02}
-              displayValue={`${config.flowSpeed.toFixed(2)}x`}
+              max={1}
+              step={0.01}
+              displayValue={`${Math.round(config.flowSpeed * 100)}%`}
               onChange={(v) => onUpdate('flowSpeed', v)}
               onCommit={onCommitHistory}
             />
