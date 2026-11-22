@@ -11,6 +11,7 @@ export const MAX_BLOBS = 14;
 export class LavaPhysics {
   public blobs: BlobState[] = [];
   public time = 0;
+  private uniformBuffer = new Float32Array(MAX_BLOBS * 4);
 
   constructor(seed = 1337) {
     this.reset(seed);
@@ -168,7 +169,7 @@ export class LavaPhysics {
   }
 
   public packUniformArray(activeCount: number): Float32Array {
-    const data = new Float32Array(MAX_BLOBS * 4);
+    const data = this.uniformBuffer;
     for (let i = 0; i < MAX_BLOBS; i++) {
       const b = this.blobs[i];
       data[i * 4 + 0] = b.x;

@@ -2,11 +2,10 @@ import type {
   BackgroundMode,
   LavaConfig,
   MetalFinish,
-  SymmetryMode,
   VesselShape,
 } from '../types/lava';
 import { MAX_BLOBS } from './physics';
-import { FULLSCREEN_VERT_SHADER, POST_FRAG_SHADER, SCENE_FRAG_SHADER } from './shaders';
+import { FULLSCREEN_VERT_SHADER, SCENE_FRAG_SHADER } from './shaders';
 
 const VESSEL_MAP: Record<VesselShape, number> = {
   astro: 0,
@@ -27,14 +26,6 @@ const FINISH_MAP: Record<MetalFinish, number> = {
 const BG_MODE_MAP: Record<BackgroundMode, number> = {
   light: 0,
   dark: 1,
-};
-
-const SYMMETRY_MAP: Record<SymmetryMode, number> = {
-  none: 0,
-  mirrorX: 1,
-  mirrorY: 2,
-  quad: 3,
-  kaleidoscope: 4,
 };
 
 function hexToRgbNorm(hex: string): [number, number, number] {
@@ -88,17 +79,9 @@ function linkProgram(
 export class LavaRenderer {
   private gl: WebGL2RenderingContext;
   private canvas: HTMLCanvasElement;
-  private sceneProgram: WebGLProgram;
-  private postProgram: WebGLProgram;
+  private program: WebGLProgram;
   private vao: WebGLVertexArrayObject | null;
-
-  private fbo: WebGLFramebuffer | null = null;
-  private fboTex: WebGLTexture | null = null;
-  private fboWidth = 0;
-  private fboHeight = 0;
-
-  private sceneUniforms: Record<string, WebGLUniformLocation | null> = {};
-  private postUniforms: Record<string, WebGLUniformLocation | null> = {};
+  private uniforms: Record<string, WebGLUniformLocation | null> = {};
 
   constructor(canvas: HTMLCanvasElement, preserveDrawingBuffer = false) {
     this.canvas = canvas;
@@ -117,16 +100,14 @@ export class LavaRenderer {
     }
 
     this.gl = gl;
-    this.sceneProgram = linkProgram(gl, FULLSCREEN_VERT_SHADER, SCENE_FRAG_SHADER);
-    this.postProgram = linkProgram(gl, FULLSCREEN_VERT_SHADER, POST_FRAG_SHADER);
+    this.program = linkProgram(gl, FULLSCREEN_VERT_SHADER, SCENE_FRAG_SHADER);
     this.vao = gl.createVertexArray();
-
     this.cacheUniforms();
   }
 
   private cacheUniforms(): void {
     const gl = this.gl;
-    const sceneNames = [
+    const names = [
       'uResolution',
       'uTime',
       'uTransparentBg',
@@ -136,9 +117,6 @@ export class LavaRenderer {
       'uWidthRatio',
       'uTilt',
       'uOffset',
-      'uEchoCount',
-      'uEchoSpread',
-      'uEchoOpacity',
       'uFloorReflection',
       'uStudioShadow',
       'uBlobCount',
@@ -151,65 +129,19 @@ export class LavaRenderer {
       'uWaxCool',
       'uLiquidColor',
       'uLiquidDensity',
-      'uBgColor',
-      'uBgStyle',
+      'uBgLuminance',
+      'uBgMode',
       'uBottomGlow',
       'uSubsurface',
-      'uParallax',
-    ];
-    for (const name of sceneNames) {
-      this.sceneUniforms[name] = gl.getUniformLocation(this.sceneProgram, name);
-    }
-
-    const postNames = [
-      'uSceneTex',
-      'uResolution',
-      'uTime',
-      'uTransparentBg',
       'uBloom',
       'uSaturation',
       'uContrast',
-      'uWarpAmount',
-      'uWarpScale',
-      'uChromatic',
-      'uSymmetry',
-      'uFlutedGlass',
-      'uFlutedDensity',
-      'uSlitScan',
       'uFilmGrain',
-      'uHalftone',
-      'uPosterize',
+      'uParallax',
     ];
-    for (const name of postNames) {
-      this.postUniforms[name] = gl.getUniformLocation(this.postProgram, name);
+    for (const name of names) {
+      this.uniforms[name] = gl.getUniformLocation(this.program, name);
     }
-  }
-
-  private ensureFbo(width: number, height: number): void {
-    if (this.fbo && this.fboTex && this.fboWidth === width && this.fboHeight === height) {
-      return;
-    }
-    const gl = this.gl;
-    if (this.fboTex) gl.deleteTexture(this.fboTex);
-    if (this.fbo) gl.deleteFramebuffer(this.fbo);
-
-    const tex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-    const fbo = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-
-    this.fbo = fbo;
-    this.fboTex = tex;
-    this.fboWidth = width;
-    this.fboHeight = height;
   }
 
   public render(
@@ -224,81 +156,48 @@ export class LavaRenderer {
     const h = this.canvas.height;
     if (w <= 0 || h <= 0) return;
 
-    this.ensureFbo(w, h);
+    gl.viewport(0, 0, w, h);
+    gl.useProgram(this.program);
     gl.bindVertexArray(this.vao);
 
-    // --- PASS 1: 3D Raymarched Lava Lamp Scene -> FBO ---
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
-    gl.viewport(0, 0, w, h);
-    gl.useProgram(this.sceneProgram);
+    const u = this.uniforms;
+    gl.uniform2f(u.uResolution, w, h);
+    gl.uniform1f(u.uTime, time);
+    gl.uniform1i(u.uTransparentBg, transparentBg ? 1 : 0);
 
-    const su = this.sceneUniforms;
-    gl.uniform2f(su.uResolution, w, h);
-    gl.uniform1f(su.uTime, time);
-    gl.uniform1i(su.uTransparentBg, transparentBg ? 1 : 0);
+    gl.uniform1i(u.uVesselShape, VESSEL_MAP[config.vesselShape]);
+    gl.uniform1i(u.uMetalFinish, FINISH_MAP[config.metalFinish]);
+    gl.uniform1f(u.uScale, config.scale);
+    gl.uniform1f(u.uWidthRatio, config.widthRatio);
+    gl.uniform1f(u.uTilt, config.tilt);
+    gl.uniform2f(u.uOffset, config.offsetX, config.offsetY);
+    gl.uniform1f(u.uFloorReflection, config.floorReflection);
+    gl.uniform1f(u.uStudioShadow, config.studioShadow);
 
-    gl.uniform1i(su.uVesselShape, VESSEL_MAP[config.vesselShape]);
-    gl.uniform1i(su.uMetalFinish, FINISH_MAP[config.metalFinish]);
-    gl.uniform1f(su.uScale, config.scale);
-    gl.uniform1f(su.uWidthRatio, config.widthRatio);
-    gl.uniform1f(su.uTilt, config.tilt);
-    gl.uniform2f(su.uOffset, config.offsetX, config.offsetY);
-    gl.uniform1i(su.uEchoCount, config.echoCount);
-    gl.uniform1f(su.uEchoSpread, config.echoSpread);
-    gl.uniform1f(su.uEchoOpacity, config.echoOpacity);
-    gl.uniform1f(su.uFloorReflection, config.floorReflection);
-    gl.uniform1f(su.uStudioShadow, config.studioShadow);
-
-    gl.uniform1i(su.uBlobCount, Math.min(MAX_BLOBS, Math.max(1, config.blobCount)));
-    gl.uniform4fv(su.uBlobs, blobData);
-    gl.uniform1f(su.uViscosity, config.viscosity);
-    gl.uniform1f(su.uTurbulence, config.turbulence);
-    gl.uniform1f(su.uParticles, config.particles);
-    gl.uniform1f(su.uGlassRefraction, config.glassRefraction);
+    gl.uniform1i(u.uBlobCount, Math.min(MAX_BLOBS, Math.max(1, config.blobCount)));
+    gl.uniform4fv(u.uBlobs, blobData);
+    gl.uniform1f(u.uViscosity, config.viscosity);
+    gl.uniform1f(u.uTurbulence, config.turbulence);
+    gl.uniform1f(u.uParticles, config.particles);
+    gl.uniform1f(u.uGlassRefraction, config.glassRefraction);
 
     const waxHot = hexToRgbNorm(config.waxColorHot);
     const waxCool = hexToRgbNorm(config.waxColorCool);
     const liqCol = hexToRgbNorm(config.liquidColor);
 
-    gl.uniform3f(su.uWaxHot, waxHot[0], waxHot[1], waxHot[2]);
-    gl.uniform3f(su.uWaxCool, waxCool[0], waxCool[1], waxCool[2]);
-    gl.uniform3f(su.uLiquidColor, liqCol[0], liqCol[1], liqCol[2]);
-    gl.uniform1f(su.uLiquidDensity, config.liquidDensity);
-    gl.uniform3f(su.uBgColor, config.bgLuminance, config.bgLuminance, config.bgLuminance);
-    gl.uniform1i(su.uBgStyle, BG_MODE_MAP[config.bgMode]);
-    gl.uniform1f(su.uBottomGlow, config.bottomGlow);
-    gl.uniform1f(su.uSubsurface, config.subsurface);
-    gl.uniform2f(su.uParallax, parallax[0], parallax[1]);
-
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-
-    // --- PASS 2: Experimental Distortions & Optical Finishing -> Screen ---
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, w, h);
-    gl.useProgram(this.postProgram);
-
-    const pu = this.postUniforms;
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.fboTex);
-    gl.uniform1i(pu.uSceneTex, 0);
-    gl.uniform2f(pu.uResolution, w, h);
-    gl.uniform1f(pu.uTime, time);
-    gl.uniform1i(pu.uTransparentBg, transparentBg ? 1 : 0);
-
-    gl.uniform1f(pu.uBloom, config.bloom);
-    gl.uniform1f(pu.uSaturation, config.saturation);
-    gl.uniform1f(pu.uContrast, config.contrast);
-
-    gl.uniform1f(pu.uWarpAmount, config.warpAmount);
-    gl.uniform1f(pu.uWarpScale, config.warpScale);
-    gl.uniform1f(pu.uChromatic, config.chromaticAberration);
-    gl.uniform1i(pu.uSymmetry, SYMMETRY_MAP[config.symmetryMode]);
-    gl.uniform1f(pu.uFlutedGlass, config.flutedGlass);
-    gl.uniform1f(pu.uFlutedDensity, config.flutedDensity);
-    gl.uniform1f(pu.uSlitScan, config.slitScan);
-    gl.uniform1f(pu.uFilmGrain, config.filmGrain);
-    gl.uniform1f(pu.uHalftone, config.halftone);
-    gl.uniform1f(pu.uPosterize, config.posterize);
+    gl.uniform3f(u.uWaxHot, waxHot[0], waxHot[1], waxHot[2]);
+    gl.uniform3f(u.uWaxCool, waxCool[0], waxCool[1], waxCool[2]);
+    gl.uniform3f(u.uLiquidColor, liqCol[0], liqCol[1], liqCol[2]);
+    gl.uniform1f(u.uLiquidDensity, config.liquidDensity);
+    gl.uniform1f(u.uBgLuminance, config.bgLuminance);
+    gl.uniform1i(u.uBgMode, BG_MODE_MAP[config.bgMode]);
+    gl.uniform1f(u.uBottomGlow, config.bottomGlow);
+    gl.uniform1f(u.uSubsurface, config.subsurface);
+    gl.uniform1f(u.uBloom, config.bloom);
+    gl.uniform1f(u.uSaturation, config.saturation);
+    gl.uniform1f(u.uContrast, config.contrast);
+    gl.uniform1f(u.uFilmGrain, config.filmGrain);
+    gl.uniform2f(u.uParallax, parallax[0], parallax[1]);
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
@@ -306,11 +205,8 @@ export class LavaRenderer {
 
   public dispose(): void {
     const gl = this.gl;
-    if (this.fboTex) gl.deleteTexture(this.fboTex);
-    if (this.fbo) gl.deleteFramebuffer(this.fbo);
     if (this.vao) gl.deleteVertexArray(this.vao);
-    gl.deleteProgram(this.sceneProgram);
-    gl.deleteProgram(this.postProgram);
+    gl.deleteProgram(this.program);
   }
 }
 

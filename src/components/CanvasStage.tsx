@@ -101,44 +101,97 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
 
     let rafId = 0;
     let lastTs = performance.now();
+    let adaptiveScale = 1.0;
+    let smoothFrameMs = 16.6;
+    let lastRenderedConfig: LavaConfig | null = null;
+    let lastW = 0;
+    let lastH = 0;
+
+    const MAX_LIVE_PIXELS = 950_000; // Crisp ~1280x740 equivalent on live stage; export remains full 2K/4K
 
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     const tick = (now: number) => {
-      const dt = Math.min((now - lastTs) / 1000, 0.05);
+      rafId = requestAnimationFrame(tick);
+
+      if (document.hidden) {
+        lastTs = now;
+        return;
+      }
+
+      const rawMs = now - lastTs;
+      const dt = Math.min(rawMs / 1000, 0.05);
       lastTs = now;
+
+      // Gently adapt internal render scale if GPU frame time creeps above 22ms
+      if (isPlayingRef.current && rawMs < 200) {
+        smoothFrameMs = smoothFrameMs * 0.9 + rawMs * 0.1;
+        if (smoothFrameMs > 24 && adaptiveScale > 0.6) {
+          adaptiveScale = Math.max(0.6, adaptiveScale - 0.04);
+        } else if (smoothFrameMs < 15.5 && adaptiveScale < 1.0) {
+          adaptiveScale = Math.min(1.0, adaptiveScale + 0.02);
+        }
+      }
 
       const cfg = configRef.current;
       const physics = physicsRef.current;
 
-      parallaxRef.current[0] += (targetParallax.current[0] - parallaxRef.current[0]) * 0.08;
-      parallaxRef.current[1] += (targetParallax.current[1] - parallaxRef.current[1]) * 0.08;
+      const parallaxDelta =
+        Math.abs(targetParallax.current[0] - parallaxRef.current[0]) +
+        Math.abs(targetParallax.current[1] - parallaxRef.current[1]);
+
+      if (parallaxDelta > 0.0005) {
+        parallaxRef.current[0] += (targetParallax.current[0] - parallaxRef.current[0]) * 0.1;
+        parallaxRef.current[1] += (targetParallax.current[1] - parallaxRef.current[1]) * 0.1;
+      }
+
+      const clientW = Math.max(1, canvas.clientWidth);
+      const clientH = Math.max(1, canvas.clientHeight);
+      viewportRatioRef.current = clientW / clientH;
+
+      const baseDpr = Math.min(window.devicePixelRatio || 1, 1.35);
+      let targetW = Math.floor(clientW * baseDpr * adaptiveScale);
+      let targetH = Math.floor(clientH * baseDpr * adaptiveScale);
+
+      const pixelCount = targetW * targetH;
+      if (pixelCount > MAX_LIVE_PIXELS) {
+        const shrink = Math.sqrt(MAX_LIVE_PIXELS / pixelCount);
+        targetW = Math.max(1, Math.floor(targetW * shrink));
+        targetH = Math.max(1, Math.floor(targetH * shrink));
+      }
+
+      const resized = canvas.width !== targetW || canvas.height !== targetH;
+      if (resized) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
+
+      const needsRender =
+        isPlayingRef.current ||
+        resized ||
+        parallaxDelta > 0.0005 ||
+        cfg !== lastRenderedConfig ||
+        lastW !== targetW ||
+        lastH !== targetH;
+
+      if (!needsRender) {
+        return;
+      }
 
       if (isPlayingRef.current) {
         const motionScale = prefersReducedMotion ? 0.25 : 1.0;
         physics.step(dt * motionScale, cfg.flowSpeed, cfg.blobCount, cfg.waxScale);
       }
 
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const clientW = Math.max(1, canvas.clientWidth);
-      const clientH = Math.max(1, canvas.clientHeight);
-      viewportRatioRef.current = clientW / clientH;
-
-      const targetW = Math.floor(clientW * dpr);
-      const targetH = Math.floor(clientH * dpr);
-      if (canvas.width !== targetW || canvas.height !== targetH) {
-        canvas.width = targetW;
-        canvas.height = targetH;
-      }
-
       if (rendererRef.current) {
         const blobData = physics.packUniformArray(cfg.blobCount);
         rendererRef.current.render(cfg, blobData, physics.time, parallaxRef.current, false);
+        lastRenderedConfig = cfg;
+        lastW = targetW;
+        lastH = targetH;
       }
-
-      rafId = requestAnimationFrame(tick);
     };
 
     rafId = requestAnimationFrame(tick);
