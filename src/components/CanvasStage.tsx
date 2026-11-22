@@ -8,8 +8,8 @@ import {
   Undo2,
   Waves,
 } from 'lucide-react';
-import { LavaRenderer } from '../engine/LavaRenderer';
-import { LavaPhysics } from '../engine/physics';
+import { LavaRenderer, type TransientMotion } from '../engine/LavaRenderer';
+import { LavaPhysics, MAX_BLOBS } from '../engine/physics';
 import type { LavaConfig } from '../types/lava';
 
 interface CanvasStageProps {
@@ -22,6 +22,7 @@ interface CanvasStageProps {
   canUndo: boolean;
   canRedo: boolean;
   onRandomizeLamp: () => void;
+  onMobileBlobCountChange: (nextCount: number) => void;
   physicsRef: React.MutableRefObject<LavaPhysics>;
   parallaxRef: React.MutableRefObject<[number, number]>;
   viewportRatioRef: React.MutableRefObject<number>;
@@ -38,6 +39,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
   canUndo,
   canRedo,
   onRandomizeLamp,
+  onMobileBlobCountChange,
   physicsRef,
   parallaxRef,
   viewportRatioRef,
@@ -51,11 +53,68 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
 
   const [webglError, setWebglError] = useState<string | null>(null);
 
-  const dragState = useRef<{ active: boolean; lastX: number; lastY: number }>({
+  const dragState = useRef<{
+    active: boolean;
+    isMobile: boolean;
+    startX: number;
+    startY: number;
+    startTime: number;
+    lastX: number;
+    lastY: number;
+    lastTime: number;
+    prevVx: number;
+    prevVy: number;
+    movedPx: number;
+    isDragging: boolean;
+  }>({
     active: false,
+    isMobile: false,
+    startX: 0,
+    startY: 0,
+    startTime: 0,
     lastX: 0,
     lastY: 0,
+    lastTime: 0,
+    prevVx: 0,
+    prevVy: 0,
+    movedPx: 0,
+    isDragging: false,
   });
+
+  // Mobile-only transient elastic shake spring & falling internal glass glitter
+  const mobileMotionRef = useRef<{
+    offsetX: number;
+    offsetY: number;
+    velX: number;
+    velY: number;
+    tilt: number;
+    tiltVel: number;
+    glitterIntensity: number;
+    glitterFallDist: number;
+    glitterClearFront: number;
+    glitterSwirl: number;
+    shakeCooldown: number;
+  }>({
+    offsetX: 0,
+    offsetY: 0,
+    velX: 0,
+    velY: 0,
+    tilt: 0,
+    tiltVel: 0,
+    glitterIntensity: 0,
+    glitterFallDist: 0,
+    glitterClearFront: 0,
+    glitterSwirl: 0,
+    shakeCooldown: 0,
+  });
+
+  const transientMotionRef = useRef<TransientMotion>({
+    offsetX: 0,
+    offsetY: 0,
+    tilt: 0,
+    shakeGlitter: [0, 0, 0, 0],
+  });
+
   const targetParallax = useRef<[number, number]>([0, 0]);
 
   useEffect(() => {
@@ -107,7 +166,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
     let lastW = 0;
     let lastH = 0;
 
-    const MAX_LIVE_PIXELS = 950_000; // Crisp ~1280x740 equivalent on live stage; export remains full 2K/4K
+    const MAX_LIVE_PIXELS = 2_400_000; // Crisp native Full HD / Retina live stage; export remains full 2K/4K
 
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
@@ -125,13 +184,13 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
       const dt = Math.min(rawMs / 1000, 0.05);
       lastTs = now;
 
-      // Gently adapt internal render scale if GPU frame time creeps above 22ms
+      // Gently adapt internal render scale if GPU frame time creeps above 23ms
       if (isPlayingRef.current && rawMs < 200) {
         smoothFrameMs = smoothFrameMs * 0.9 + rawMs * 0.1;
-        if (smoothFrameMs > 24 && adaptiveScale > 0.6) {
-          adaptiveScale = Math.max(0.6, adaptiveScale - 0.04);
-        } else if (smoothFrameMs < 15.5 && adaptiveScale < 1.0) {
-          adaptiveScale = Math.min(1.0, adaptiveScale + 0.02);
+        if (smoothFrameMs > 23 && adaptiveScale > 0.65) {
+          adaptiveScale = Math.max(0.65, adaptiveScale - 0.03);
+        } else if (smoothFrameMs < 16.5 && adaptiveScale < 1.0) {
+          adaptiveScale = Math.min(1.0, adaptiveScale + 0.015);
         }
       }
 
@@ -151,7 +210,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
       const clientH = Math.max(1, canvas.clientHeight);
       viewportRatioRef.current = clientW / clientH;
 
-      const baseDpr = Math.min(window.devicePixelRatio || 1, 1.35);
+      const baseDpr = Math.min(window.devicePixelRatio || 1, 2.0);
       let targetW = Math.floor(clientW * baseDpr * adaptiveScale);
       let targetH = Math.floor(clientH * baseDpr * adaptiveScale);
 
@@ -168,10 +227,61 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
         canvas.height = targetH;
       }
 
+      // Integrate mobile-only elastic shake spring & falling internal glass glitter
+      const m = mobileMotionRef.current;
+      const hasSpring =
+        Math.abs(m.offsetX) > 0.0004 ||
+        Math.abs(m.offsetY) > 0.0004 ||
+        Math.abs(m.velX) > 0.0004 ||
+        Math.abs(m.velY) > 0.0004 ||
+        Math.abs(m.tilt) > 0.0004 ||
+        Math.abs(m.tiltVel) > 0.0004;
+
+      if (hasSpring) {
+        const subDt = Math.min(dt, 0.033);
+        const ax = -135 * m.offsetX - 9.2 * m.velX;
+        const ay = -135 * m.offsetY - 9.2 * m.velY;
+        const at = -115 * m.tilt - 8.4 * m.tiltVel;
+        m.velX += ax * subDt;
+        m.velY += ay * subDt;
+        m.tiltVel += at * subDt;
+        m.offsetX = Math.max(-0.18, Math.min(0.18, m.offsetX + m.velX * subDt));
+        m.offsetY = Math.max(-0.12, Math.min(0.12, m.offsetY + m.velY * subDt));
+        m.tilt = Math.max(-0.32, Math.min(0.32, m.tilt + m.tiltVel * subDt));
+      } else {
+        m.offsetX = 0;
+        m.offsetY = 0;
+        m.velX = 0;
+        m.velY = 0;
+        m.tilt = 0;
+        m.tiltVel = 0;
+      }
+
+      const hasGlitter = m.glitterIntensity > 0.002;
+      if (hasGlitter) {
+        const fallSpeed = m.shakeCooldown > 0 ? 0.16 : 0.42;
+        m.glitterFallDist += dt * fallSpeed;
+        m.glitterSwirl += dt * (m.shakeCooldown > 0 ? 2.4 : 0.75);
+
+        if (m.shakeCooldown > 0) {
+          m.shakeCooldown = Math.max(0, m.shakeCooldown - dt);
+        } else {
+          // Sweeps clearing front from top of glass down to bottom so sparkles fade downward
+          m.glitterClearFront += dt * 0.3;
+          if (m.glitterClearFront >= 1.15) {
+            m.glitterIntensity = 0;
+            m.glitterClearFront = 0;
+            m.glitterFallDist = 0;
+          }
+        }
+      }
+
       const needsRender =
         isPlayingRef.current ||
         resized ||
         parallaxDelta > 0.0005 ||
+        hasSpring ||
+        hasGlitter ||
         cfg !== lastRenderedConfig ||
         lastW !== targetW ||
         lastH !== targetH;
@@ -186,8 +296,17 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
       }
 
       if (rendererRef.current) {
+        const tm = transientMotionRef.current;
+        tm.offsetX = m.offsetX;
+        tm.offsetY = m.offsetY;
+        tm.tilt = m.tilt;
+        tm.shakeGlitter[0] = m.glitterIntensity;
+        tm.shakeGlitter[1] = m.glitterFallDist;
+        tm.shakeGlitter[2] = m.glitterClearFront;
+        tm.shakeGlitter[3] = m.glitterSwirl;
+
         const blobData = physics.packUniformArray(cfg.blobCount);
-        rendererRef.current.render(cfg, blobData, physics.time, parallaxRef.current, false);
+        rendererRef.current.render(cfg, blobData, physics.time, parallaxRef.current, false, tm);
         lastRenderedConfig = cfg;
         lastW = targetW;
         lastH = targetH;
@@ -205,38 +324,155 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
     };
   }, [physicsRef, parallaxRef, viewportRatioRef]);
 
+  const isMobileGesture = (e: React.PointerEvent<HTMLCanvasElement>): boolean =>
+    e.pointerType === 'touch' || (typeof window !== 'undefined' && window.innerWidth < 768);
+
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
-    dragState.current = { active: true, lastX: e.clientX, lastY: e.clientY };
+    const mobile = isMobileGesture(e);
+    const now = performance.now();
 
-    const rect = e.currentTarget.getBoundingClientRect();
-    const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    const ny = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
-    physicsRef.current.applyImpulse(nx, ny, 0, 0.24);
+    dragState.current = {
+      active: true,
+      isMobile: mobile,
+      startX: e.clientX,
+      startY: e.clientY,
+      startTime: now,
+      lastX: e.clientX,
+      lastY: e.clientY,
+      lastTime: now,
+      prevVx: 0,
+      prevVy: 0,
+      movedPx: 0,
+      isDragging: false,
+    };
+
+    if (!mobile) {
+      // Desktop behavior preserved untouched
+      const rect = e.currentTarget.getBoundingClientRect();
+      const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ny = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+      physicsRef.current.applyImpulse(nx, ny, 0, 0.24);
+    }
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     const ny = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
-    targetParallax.current = [nx * 0.45, ny * 0.35];
 
-    if (dragState.current.active) {
-      const dx = (e.clientX - dragState.current.lastX) / rect.width;
-      const dy = -(e.clientY - dragState.current.lastY) / rect.height;
-      physicsRef.current.applyImpulse(nx, ny, dx * 4.2, dy * 4.2);
-      dragState.current.lastX = e.clientX;
-      dragState.current.lastY = e.clientY;
+    const ds = dragState.current;
+    if (ds.active && ds.isMobile) {
+      const now = performance.now();
+      const dxPx = e.clientX - ds.lastX;
+      const dyPx = e.clientY - ds.lastY;
+      const stepPx = Math.hypot(dxPx, dyPx);
+      ds.movedPx += stepPx;
+
+      if (ds.movedPx > 8) {
+        ds.isDragging = true;
+      }
+
+      if (ds.isDragging && stepPx > 0.5) {
+        const dtMove = Math.max(0.008, (now - ds.lastTime) / 1000);
+        const dxNorm = dxPx / Math.max(1, rect.width);
+        const dyNorm = -dyPx / Math.max(1, rect.height);
+        const vx = dxNorm / dtMove;
+        const vy = dyNorm / dtMove;
+        const dvx = vx - ds.prevVx;
+        const dvy = vy - ds.prevVy;
+        const speed = Math.hypot(vx, vy);
+        const jerk = Math.hypot(dvx, dvy);
+        const shakeEnergy = Math.min(2.4, speed * 0.48 + jerk * 0.14);
+
+        // Elastic spring-damper lamp rock + tilt (no haptic vibration)
+        const m = mobileMotionRef.current;
+        m.offsetX = Math.max(-0.18, Math.min(0.18, m.offsetX + dxNorm * 0.34));
+        m.offsetY = Math.max(-0.12, Math.min(0.12, m.offsetY + dyNorm * 0.24));
+        m.velX = Math.max(-2.4, Math.min(2.4, m.velX + dxNorm * 5.2));
+        m.velY = Math.max(-1.8, Math.min(1.8, m.velY + dyNorm * 3.8));
+        m.tiltVel = Math.max(-4.5, Math.min(4.5, m.tiltVel - dxNorm * 11.5));
+
+        // Vigorous wax agitation inside the vessel
+        physicsRef.current.applyShakeImpulse(
+          vx * 0.38,
+          vy * 0.38,
+          shakeEnergy,
+          configRef.current.blobCount
+        );
+
+        // Release internal glass glitter that falls & clears top-to-bottom after shaking
+        if (shakeEnergy > 0.2) {
+          m.glitterIntensity = Math.min(1.0, m.glitterIntensity + Math.min(0.45, shakeEnergy * 0.28));
+          m.glitterClearFront = Math.max(0, m.glitterClearFront - Math.min(0.38, shakeEnergy * 0.24));
+          m.glitterSwirl += Math.min(0.6, shakeEnergy * 0.25);
+          m.shakeCooldown = 0.3;
+        }
+
+        ds.prevVx = vx;
+        ds.prevVy = vy;
+        ds.lastX = e.clientX;
+        ds.lastY = e.clientY;
+        ds.lastTime = now;
+      }
+      return;
+    }
+
+    // Desktop hover parallax & drag impulse preserved untouched
+    if (!isMobileGesture(e)) {
+      targetParallax.current = [nx * 0.45, ny * 0.35];
+      if (ds.active) {
+        const dx = (e.clientX - ds.lastX) / rect.width;
+        const dy = -(e.clientY - ds.lastY) / rect.height;
+        physicsRef.current.applyImpulse(nx, ny, dx * 4.2, dy * 4.2);
+        ds.lastX = e.clientX;
+        ds.lastY = e.clientY;
+      }
     }
   };
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const ds = dragState.current;
+    if (ds.active && ds.isMobile && !ds.isDragging && ds.movedPx < 12) {
+      const tapDuration = performance.now() - ds.startTime;
+      if (tapDuration < 400) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const cfg = configRef.current;
+        const hit = physicsRef.current.hitTestWax(
+          e.clientX,
+          e.clientY,
+          rect,
+          cfg,
+          parallaxRef.current,
+          mobileMotionRef.current
+        );
+        if (hit) {
+          const currentCount = cfg.blobCount;
+          if (currentCount < MAX_BLOBS) {
+            const nextCount = currentCount + 1;
+            physicsRef.current.splitBlobAt(hit, nextCount, cfg.waxScale);
+            onMobileBlobCountChange(nextCount);
+          } else {
+            physicsRef.current.coalesceToSingleBlob(hit, cfg.waxScale);
+            onMobileBlobCountChange(1);
+          }
+        }
+      }
+    }
+    ds.active = false;
+    ds.isDragging = false;
+  };
+
+  const handlePointerCancel = () => {
     dragState.current.active = false;
+    dragState.current.isDragging = false;
   };
 
   const handlePointerLeave = () => {
-    dragState.current.active = false;
-    targetParallax.current = [0, 0];
+    if (!dragState.current.isMobile) {
+      dragState.current.active = false;
+      targetParallax.current = [0, 0];
+    }
   };
 
   return (
@@ -258,6 +494,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
           onPointerLeave={handlePointerLeave}
           className="w-full h-full block cursor-grab active:cursor-grabbing touch-none"
         />

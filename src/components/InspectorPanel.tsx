@@ -444,7 +444,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 <SliderControl
                   label="Quantidade de Gotas"
                   value={config.blobCount}
-                  min={3}
+                  min={1}
                   max={14}
                   step={1}
                   onChange={(v) => onUpdate('blobCount', Math.round(v))}

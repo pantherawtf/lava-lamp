@@ -192,6 +192,7 @@ export default function App() {
           canUndo={historyIndex > 0}
           canRedo={historyIndex < history.length - 1}
           onRandomizeLamp={handleRandomizeLamp}
+          onMobileBlobCountChange={(nextCount) => handleUpdate('blobCount', nextCount)}
           physicsRef={physicsRef}
           parallaxRef={parallaxRef}
           viewportRatioRef={viewportRatioRef}

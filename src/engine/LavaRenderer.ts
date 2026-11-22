@@ -9,6 +9,13 @@ const VESSEL_SHAPE_MAP: Record<VesselShape, number> = {
   fluid: 4,
 };
 
+export interface TransientMotion {
+  offsetX: number;
+  offsetY: number;
+  tilt: number;
+  shakeGlitter: [number, number, number, number];
+}
+
 const METAL_FINISH_MAP: Record<MetalFinish, number> = {
   brushedSilver: 0,
   darkChrome: 1,
@@ -129,6 +136,7 @@ export class LavaRenderer {
       'uSaturation',
       'uContrast',
       'uFilmGrain',
+      'uShakeGlitter',
     ];
 
     for (const name of uniformNames) {
@@ -141,7 +149,8 @@ export class LavaRenderer {
     blobData: Float32Array,
     time: number,
     parallax: [number, number],
-    transparentBg = false
+    transparentBg = false,
+    transientMotion?: TransientMotion
   ): void {
     const gl = this.gl;
     const width = gl.canvas.width;
@@ -162,8 +171,12 @@ export class LavaRenderer {
     gl.uniform1i(u.uMetalFinish, METAL_FINISH_MAP[config.metalFinish] ?? 0);
     gl.uniform1f(u.uScale, config.scale * 0.7);
     gl.uniform1f(u.uWidthRatio, config.widthRatio);
-    gl.uniform1f(u.uTilt, config.tilt);
-    gl.uniform2f(u.uOffset, config.offsetX, config.offsetY);
+    gl.uniform1f(u.uTilt, config.tilt + (transientMotion?.tilt ?? 0));
+    gl.uniform2f(
+      u.uOffset,
+      config.offsetX + (transientMotion?.offsetX ?? 0),
+      config.offsetY + (transientMotion?.offsetY ?? 0)
+    );
     gl.uniform1f(u.uFloorReflection, config.floorReflection);
     gl.uniform1f(u.uStudioShadow, config.studioShadow);
 
@@ -190,6 +203,9 @@ export class LavaRenderer {
     gl.uniform1f(u.uSaturation, config.saturation);
     gl.uniform1f(u.uContrast, config.contrast);
     gl.uniform1f(u.uFilmGrain, config.filmGrain);
+
+    const sg = transientMotion?.shakeGlitter;
+    gl.uniform4f(u.uShakeGlitter, sg ? sg[0] : 0, sg ? sg[1] : 0, sg ? sg[2] : 0, sg ? sg[3] : 0);
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
