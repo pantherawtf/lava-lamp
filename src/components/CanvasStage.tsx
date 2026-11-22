@@ -620,7 +620,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
           } inline-flex items-center gap-1.5 text-[12.5px] font-medium bg-black/[0.05] dark:bg-white/[0.07] md:hover:bg-black/[0.1] md:dark:hover:bg-white/[0.13] active:bg-black/[0.14] dark:active:bg-white/[0.18] text-[#14141A] dark:text-[#F4F4F6] active:scale-[0.96] transition-all whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]`}
         >
           <Waves className="w-4 h-4 md:w-3.5 md:h-3.5 shrink-0 text-[#4A4A58] dark:text-[#D4D4E0]" aria-hidden="true" />
-          <span>Agitar Cera</span>
+          <span>Shake</span>
         </button>
 
         <div className="w-px h-5 bg-black/[0.09] dark:bg-white/[0.08] mx-0.5 shrink-0" aria-hidden="true" />

@@ -556,17 +556,17 @@ export class LavaPhysics {
       const oppZ = refZ >= 0 ? -1 : 1;
       const oppY = refY >= 0 ? -1 : 1;
 
-      // Gently glide toward the opposite side with a slight curved arc so drops flow smoothly past each other
-      const curveX = -refZ * b.orbitSign * 0.45;
-      const curveZ = refX * b.orbitSign * 0.45;
+      // Gently glide toward the opposite side with a slight curved arc (+30% intensity)
+      const curveX = -refZ * b.orbitSign * 0.585;
+      const curveZ = refX * b.orbitSign * 0.585;
 
-      b.vx = clamp(b.vx * 0.45 + oppX * (0.13 + Math.abs(b.x) * 0.34) + curveX, -0.3, 0.3);
-      b.vz = clamp(b.vz * 0.45 + oppZ * (0.095 + Math.abs(b.z) * 0.26) + curveZ, -0.24, 0.24);
-      b.vy = clamp(b.vy * 0.45 + oppY * (0.15 + Math.abs(b.y) * 0.26), -0.32, 0.32);
+      b.vx = clamp(b.vx * 0.45 + oppX * (0.169 + Math.abs(b.x) * 0.442) + curveX, -0.39, 0.39);
+      b.vz = clamp(b.vz * 0.45 + oppZ * (0.124 + Math.abs(b.z) * 0.338) + curveZ, -0.312, 0.312);
+      b.vy = clamp(b.vy * 0.45 + oppY * (0.195 + Math.abs(b.y) * 0.338), -0.416, 0.416);
 
       // Softly nudge thermal buoyancy instead of abruptly snapping to extremes
-      const targetTemp = oppY > 0 ? 0.72 : 0.28;
-      b.temp = clamp(mix(b.temp, targetTemp, 0.52), 0.14, 0.86);
+      const targetTemp = oppY > 0 ? 0.76 : 0.24;
+      b.temp = clamp(mix(b.temp, targetTemp, 0.6), 0.12, 0.88);
 
       // Staggered phase shift keeps the sweep fluid and desynchronized
       b.phase += 1.25 + (i % 3) * 0.32;

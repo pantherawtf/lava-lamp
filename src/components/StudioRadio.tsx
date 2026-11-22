@@ -3,23 +3,17 @@ import {
   Pause,
   Play,
   Radio,
-  SkipForward,
   Volume1,
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import {
-  STUDIO_TRACKS,
-  StudioAudioEngine,
-  type StudioTrack,
-} from '../engine/StudioAudioEngine';
+import { StudioAudioEngine } from '../engine/StudioAudioEngine';
 
 export const StudioRadio: React.FC = () => {
   const engineRef = useRef<StudioAudioEngine | null>(null);
 
   const [isOpen, setIsOpen] = useState(false);
   const [isPlaying, setIsPlaying] = useState(true);
-  const [track, setTrack] = useState<StudioTrack>(STUDIO_TRACKS[0]);
   const [volume, setVolume] = useState(0.45);
   const [isMuted, setIsMuted] = useState(false);
   const lastVolumeRef = useRef(0.45);
@@ -86,19 +80,6 @@ export const StudioRadio: React.FC = () => {
     }
   };
 
-  const handleNext = async () => {
-    const engine = engineRef.current;
-    if (!engine) return;
-    const next = engine.nextTrack();
-    setTrack(next);
-    if (!isPlaying || !engine.getIsPlaying()) {
-      userPausedRef.current = false;
-      engine.setVolume(isMuted ? 0 : volume);
-      await engine.play();
-      setIsPlaying(true);
-    }
-  };
-
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = parseFloat(e.target.value);
     setVolume(v);
@@ -140,11 +121,7 @@ export const StudioRadio: React.FC = () => {
           aria-expanded={isOpen}
           aria-label={isOpen ? 'Fechar rádio de estúdio' : 'Abrir rádio de estúdio'}
           title={
-            isOpen
-              ? 'Recolher rádio'
-              : isPlaying
-                ? `Rádio tocando: ${track.title}`
-                : 'Rádio de estúdio (estilo Sade)'
+            isOpen ? 'Recolher rádio' : isPlaying ? 'Rádio tocando' : 'Rádio de estúdio'
           }
           className={`h-11 w-11 md:h-8 md:w-8 inline-flex items-center justify-center rounded-full transition-all active:scale-95 shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5C35] ${
             isPlaying
@@ -174,23 +151,6 @@ export const StudioRadio: React.FC = () => {
                 <Play className="w-3 h-3 fill-current translate-x-[0.5px]" aria-hidden="true" />
               )}
             </button>
-
-            <button
-              type="button"
-              onClick={handleNext}
-              aria-label="Próxima faixa"
-              title={`Próxima faixa (atual: ${track.title})`}
-              className="h-6 w-6 inline-flex items-center justify-center rounded-full text-[#5A5A6A] dark:text-[#B4B4C4] hover:text-[#14141A] dark:hover:text-white hover:bg-black/[0.07] dark:hover:bg-white/[0.1] transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]"
-            >
-              <SkipForward className="w-3 h-3" aria-hidden="true" />
-            </button>
-
-            <span
-              className="text-[11.5px] font-medium text-[#2A2A36] dark:text-[#DCDCE6] max-w-[116px] truncate select-none pl-0.5"
-              title={`${track.title} · ${track.subtitle}`}
-            >
-              {track.title}
-            </span>
 
             <div className="w-px h-4 bg-black/[0.09] dark:bg-white/[0.1] mx-0.5" aria-hidden="true" />
 
@@ -222,59 +182,44 @@ export const StudioRadio: React.FC = () => {
 
       {/* Touch-Friendly Popover for Mobile Viewports (< md) */}
       {isOpen && (
-        <div className="md:hidden fixed left-4 right-4 top-[calc(env(safe-area-inset-top)+4.25rem)] z-30 mx-auto max-w-[360px] flex items-center justify-between gap-1.5 px-2 py-1 rounded-2xl bg-white/95 dark:bg-[#141419]/95 backdrop-blur-md border border-black/[0.1] dark:border-white/[0.12] shadow-[0_12px_32px_rgba(0,0,0,0.2)] dark:shadow-[0_12px_36px_rgba(0,0,0,0.65)]">
-          <div className="flex items-center gap-0.5 min-w-0">
-            <button
-              type="button"
-              data-radio-play-toggle="true"
-              onClick={handleTogglePlay}
-              aria-label={isPlaying ? 'Pausar rádio' : 'Tocar rádio'}
-              className="h-11 w-11 inline-flex items-center justify-center rounded-xl text-[#14141A] dark:text-[#F4F4F6] active:bg-black/[0.08] dark:active:bg-white/[0.12] active:scale-95 transition-all shrink-0 cursor-pointer"
-            >
-              {isPlaying ? (
-                <Pause className="w-4 h-4 fill-current" aria-hidden="true" />
-              ) : (
-                <Play className="w-4 h-4 fill-current translate-x-[0.5px]" aria-hidden="true" />
-              )}
-            </button>
+        <div className="md:hidden fixed left-4 right-4 top-[calc(env(safe-area-inset-top)+4.25rem)] z-30 mx-auto max-w-[260px] flex items-center gap-1.5 px-2 py-1 rounded-2xl bg-white/95 dark:bg-[#141419]/95 backdrop-blur-md border border-black/[0.1] dark:border-white/[0.12] shadow-[0_12px_32px_rgba(0,0,0,0.2)] dark:shadow-[0_12px_36px_rgba(0,0,0,0.65)]">
+          <button
+            type="button"
+            data-radio-play-toggle="true"
+            onClick={handleTogglePlay}
+            aria-label={isPlaying ? 'Pausar rádio' : 'Tocar rádio'}
+            className="h-11 w-11 inline-flex items-center justify-center rounded-xl text-[#14141A] dark:text-[#F4F4F6] active:bg-black/[0.08] dark:active:bg-white/[0.12] active:scale-95 transition-all shrink-0 cursor-pointer"
+          >
+            {isPlaying ? (
+              <Pause className="w-4 h-4 fill-current" aria-hidden="true" />
+            ) : (
+              <Play className="w-4 h-4 fill-current translate-x-[0.5px]" aria-hidden="true" />
+            )}
+          </button>
 
-            <button
-              type="button"
-              onClick={handleNext}
-              aria-label="Próxima faixa"
-              className="h-11 w-11 inline-flex items-center justify-center rounded-xl text-[#5A5A6A] dark:text-[#B4B4C4] active:bg-black/[0.08] dark:active:bg-white/[0.12] active:scale-95 transition-all shrink-0 cursor-pointer"
-            >
-              <SkipForward className="w-4 h-4" aria-hidden="true" />
-            </button>
+          <div className="w-px h-5 bg-black/[0.09] dark:bg-white/[0.1] shrink-0" aria-hidden="true" />
 
-            <span className="text-[12.5px] font-medium text-[#2A2A36] dark:text-[#DCDCE6] truncate px-1">
-              {track.title}
-            </span>
-          </div>
+          <button
+            type="button"
+            onClick={handleToggleMute}
+            aria-label={isMuted ? 'Ativar som' : 'Silenciar'}
+            className="h-11 w-11 inline-flex items-center justify-center rounded-xl text-[#5A5A6A] dark:text-[#B4B4C4] active:bg-black/[0.08] dark:active:bg-white/[0.12] active:scale-95 transition-all shrink-0 cursor-pointer"
+          >
+            <VolumeIcon className="w-4 h-4" aria-hidden="true" />
+          </button>
 
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              type="button"
-              onClick={handleToggleMute}
-              aria-label={isMuted ? 'Ativar som' : 'Silenciar'}
-              className="h-11 w-11 inline-flex items-center justify-center rounded-xl text-[#5A5A6A] dark:text-[#B4B4C4] active:bg-black/[0.08] dark:active:bg-white/[0.12] active:scale-95 transition-all shrink-0 cursor-pointer"
-            >
-              <VolumeIcon className="w-4 h-4" aria-hidden="true" />
-            </button>
-
-            <div className="w-20 pr-2 flex items-center shrink-0">
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={isMuted ? 0 : volume}
-                onChange={handleVolumeChange}
-                onTouchMove={(e) => e.stopPropagation()}
-                aria-label="Volume do rádio"
-                className="studio-slider studio-slider-compact"
-              />
-            </div>
+          <div className="flex-1 pr-2 flex items-center min-w-0">
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={isMuted ? 0 : volume}
+              onChange={handleVolumeChange}
+              onTouchMove={(e) => e.stopPropagation()}
+              aria-label="Volume do rádio"
+              className="studio-slider studio-slider-compact"
+            />
           </div>
         </div>
       )}
