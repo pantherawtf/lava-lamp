@@ -3,7 +3,7 @@ import {
   Pause,
   Play,
   Redo2,
-  RotateCcw,
+  RefreshCw,
   SlidersHorizontal,
   Undo2,
   Waves,
@@ -21,7 +21,7 @@ interface CanvasStageProps {
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
-  onResetPreset: () => void;
+  onRandomizeLamp: () => void;
   physicsRef: React.MutableRefObject<LavaPhysics>;
   parallaxRef: React.MutableRefObject<[number, number]>;
   viewportRatioRef: React.MutableRefObject<number>;
@@ -37,7 +37,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
   onRedo,
   canUndo,
   canRedo,
-  onResetPreset,
+  onRandomizeLamp,
   physicsRef,
   parallaxRef,
   viewportRatioRef,
@@ -320,12 +320,12 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
 
         <button
           type="button"
-          onClick={onResetPreset}
-          title="Restaurar composição inicial"
-          aria-label="Restaurar composição"
-          className="h-9 w-9 inline-flex items-center justify-center rounded-lg text-[#5A5A6A] dark:text-[#9A9AA8] hover:text-[#14141A] dark:hover:text-white hover:bg-black/[0.06] dark:hover:bg-white/[0.08] transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]"
+          onClick={onRandomizeLamp}
+          title="Gerar nova configuração de lava lamp"
+          aria-label="Randomizar configurações da lâmpada"
+          className="h-9 w-9 inline-flex items-center justify-center rounded-lg text-[#5A5A6A] dark:text-[#9A9AA8] hover:text-[#14141A] dark:hover:text-white hover:bg-black/[0.06] dark:hover:bg-white/[0.08] active:rotate-90 transition-all duration-150 shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF5C35]"
         >
-          <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+          <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
         </button>
 
         {onToggleMobileInspector && (

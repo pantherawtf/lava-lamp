@@ -3,7 +3,7 @@ import { CanvasStage } from './components/CanvasStage';
 import { ExportModal } from './components/ExportModal';
 import { InspectorPanel } from './components/InspectorPanel';
 import { TopBar } from './components/TopBar';
-import { PRESETS } from './data/presets';
+import { PRESETS, randomizeLampConfig } from './data/presets';
 import { LavaPhysics } from './engine/physics';
 import type {
   AspectRatioId,
@@ -129,18 +129,13 @@ export default function App() {
     setActivePresetId(null);
   }, [history, historyIndex]);
 
-  const handleResetPreset = useCallback(() => {
-    const base = PRESETS.find((p) => p.id === activePresetId) ?? PRESETS[0];
-    const next: LavaConfig = {
-      ...base.config,
-      bgMode: configRef.current.bgMode,
-      bgLuminance: configRef.current.bgLuminance,
-    };
+  const handleRandomizeLamp = useCallback(() => {
+    const next = randomizeLampConfig(configRef.current);
     setConfig(next);
-    setActivePresetId(base.id);
-    physicsRef.current.reset(2026);
+    setActivePresetId(null);
+    physicsRef.current.reset(Math.floor(Math.random() * 999999));
     pushHistory(next);
-  }, [activePresetId, pushHistory]);
+  }, [pushHistory]);
 
   // Keyboard shortcuts (Space: play/pause, Ctrl/Cmd+Z: undo/redo, ]: toggle side panel)
   useEffect(() => {
@@ -201,7 +196,7 @@ export default function App() {
           onRedo={handleRedo}
           canUndo={historyIndex > 0}
           canRedo={historyIndex < history.length - 1}
-          onResetPreset={handleResetPreset}
+          onRandomizeLamp={handleRandomizeLamp}
           physicsRef={physicsRef}
           parallaxRef={parallaxRef}
           viewportRatioRef={viewportRatioRef}

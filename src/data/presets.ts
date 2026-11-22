@@ -269,3 +269,118 @@ export const CURATED_PALETTES: ColorPaletteSwatch[] = [
     liquidDensity: 0.7,
   },
 ];
+
+function hslToHex(h: number, s: number, l: number): string {
+  const hue = ((h % 360) + 360) % 360;
+  const sat = Math.max(0, Math.min(100, s)) / 100;
+  const lig = Math.max(0, Math.min(100, l)) / 100;
+  const c = (1 - Math.abs(2 * lig - 1)) * sat;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = lig - c / 2;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hue < 60) {
+    r = c;
+    g = x;
+  } else if (hue < 120) {
+    r = x;
+    g = c;
+  } else if (hue < 180) {
+    g = c;
+    b = x;
+  } else if (hue < 240) {
+    g = x;
+    b = c;
+  } else if (hue < 300) {
+    r = x;
+    b = c;
+  } else {
+    r = c;
+    b = x;
+  }
+  const toByte = (v: number) =>
+    Math.round((v + m) * 255)
+      .toString(16)
+      .padStart(2, '0');
+  return `#${toByte(r)}${toByte(g)}${toByte(b)}`.toUpperCase();
+}
+
+function pick<T>(arr: readonly T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+/**
+ * Generates a fresh, clean lava lamp configuration (vessel, finish, internal wax/liquid colors,
+ * fluid dynamics, particles, and lighting) without image distortions, preserving the current Light/Dark backdrop.
+ */
+export function randomizeLampConfig(current: import('../types/lava').LavaConfig): import('../types/lava').LavaConfig {
+  const shapes = ['astro', 'capsule', 'bullet', 'organic'] as const;
+  const finishes = [
+    'brushedSilver',
+    'darkChrome',
+    'roseCopper',
+    'matteObsidian',
+    'frostedGlass',
+  ] as const;
+
+  // Pick a different vessel shape most of the time so each click feels noticeably fresh
+  const otherShapes = shapes.filter((s) => s !== current.vesselShape);
+  const vesselShape = Math.random() < 0.78 ? pick(otherShapes) : pick(shapes);
+  const metalFinish = pick(finishes);
+
+  // 45% curated studio palette, 55% freshly synthesized harmonious color pairing
+  let waxColorHot: string;
+  let waxColorCool: string;
+  let liquidColor: string;
+  let liquidDensity: number;
+
+  if (Math.random() < 0.45) {
+    const pal = pick(CURATED_PALETTES);
+    waxColorHot = pal.waxColorHot;
+    waxColorCool = pal.waxColorCool;
+    liquidColor = pal.liquidColor;
+    liquidDensity = Math.max(0.14, Math.min(0.86, pal.liquidDensity + (Math.random() - 0.5) * 0.2));
+  } else {
+    const waxHue = Math.random() * 360;
+    const liquidOffset = pick([140, 175, 205, 230, -35, 35]);
+    waxColorCool = hslToHex(waxHue, 82 + Math.random() * 16, 46 + Math.random() * 12);
+    waxColorHot = hslToHex(waxHue + 22, 85 + Math.random() * 15, 72 + Math.random() * 16);
+    liquidColor = hslToHex(waxHue + liquidOffset, 68 + Math.random() * 30, 32 + Math.random() * 26);
+    liquidDensity = 0.16 + Math.random() * 0.68;
+  }
+
+  return {
+    ...current,
+    vesselShape,
+    metalFinish,
+    scale: 0.94 + Math.random() * 0.14,
+    widthRatio: 0.86 + Math.random() * 0.24,
+    tilt: 0.0,
+    offsetX: 0.0,
+    offsetY: 0.0,
+    echoCount: 1,
+    floorReflection: 0.08 + Math.random() * 0.24,
+    studioShadow: 0.36 + Math.random() * 0.34,
+
+    blobCount: Math.floor(3 + Math.random() * 6),
+    viscosity: 0.09 + Math.random() * 0.18,
+    flowSpeed: 0.68 + Math.random() * 0.52,
+    turbulence: Math.random() * 0.12,
+    waxScale: 0.58 + Math.random() * 0.34,
+    particles: 0.1 + Math.random() * 0.82,
+    glassRefraction: 0.68 + Math.random() * 0.26,
+
+    waxColorHot,
+    waxColorCool,
+    liquidColor,
+    liquidDensity,
+    bottomGlow: 0.85 + Math.random() * 0.62,
+    subsurface: 0.58 + Math.random() * 0.3,
+    bloom: 0.16 + Math.random() * 0.28,
+    saturation: 1.05 + Math.random() * 0.16,
+    contrast: 1.02 + Math.random() * 0.08,
+    filmGrain: 0.03 + Math.random() * 0.06,
+  };
+}
+
