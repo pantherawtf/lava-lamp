@@ -707,6 +707,26 @@ void main() {
   vec3 finalCol = bg;
   float finalAlpha = uTransparentBg == 1 ? 0.0 : 1.0;
 
+  // Soft ambient halo around the lamp, tinted by the wax colors
+  if (uVesselShape != 4) {
+    vec4 gb = getVesselBounds(uVesselShape);
+    vec2 lpG = (p - uOffset) / max(uScale, 0.1);
+    vec2 center = vec2(0.0, (gb.z + gb.w) * 0.5);
+    vec2 halfSize = vec2(0.27 * uWidthRatio, (gb.w - gb.z) * 0.5);
+    vec2 q = max(abs(lpG - center) - halfSize, vec2(0.0));
+    float dG = length(q) * uScale;
+    // Hotter wax color near the base, cooler toward the top
+    float hG = clamp((lpG.y - gb.z) / max(gb.w - gb.z, 0.01), 0.0, 1.0);
+    vec3 glowTint = mix(uWaxHot, uWaxCool, smoothstep(0.0, 1.0, hG));
+    glowTint = mix(glowTint, vec3(dot(glowTint, vec3(0.333))), 0.12);
+    float glowAmt = (exp(-dG * 7.0) * 0.14 + exp(-dG * 2.6) * 0.05) * (0.75 + 0.25 * uBottomGlow);
+    float bgLum = dot(finalCol, vec3(0.299, 0.587, 0.114));
+    // Additive on dark backdrops, tinted blend on light ones
+    finalCol += glowTint * glowAmt * (1.0 - smoothstep(0.35, 0.8, bgLum));
+    finalCol = mix(finalCol, glowTint, glowAmt * 0.35 * smoothstep(0.35, 0.8, bgLum));
+    if (uTransparentBg == 1) finalAlpha = max(finalAlpha, clamp(glowAmt * 0.8, 0.0, 1.0));
+  }
+
   // Floor Mirror Reflection (Image 7)
   if (uFloorReflection > 0.01 && uVesselShape != 4) {
     vec4 bounds = getVesselBounds(uVesselShape);
