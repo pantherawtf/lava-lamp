@@ -106,9 +106,35 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
       typeof window !== 'undefined' &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+    // Adaptive resolution: if the machine can't keep up, render fewer pixels
+    // (the canvas is stretched by CSS) instead of freezing the browser.
+    let renderScale = 1;
+    let slowFrames = 0;
+    let lowQualitySet = false;
+    let fastFrames = 0;
+
     const tick = (now: number) => {
-      const dt = Math.min((now - lastTs) / 1000, 0.05);
+      const rawMs = now - lastTs;
+      const dt = Math.min(rawMs / 1000, 0.05);
       lastTs = now;
+
+      if (rawMs > 0 && rawMs < 1000) {
+        if (rawMs > 30) { slowFrames++; fastFrames = 0; }
+        else if (rawMs < 18) { fastFrames++; slowFrames = 0; }
+        else { slowFrames = 0; fastFrames = 0; }
+        if (slowFrames >= 20 && renderScale > 0.5) {
+          renderScale = Math.max(0.45, renderScale * 0.8);
+          slowFrames = 0;
+        } else if (slowFrames >= 40 && !lowQualitySet) {
+          // Still slow at minimum resolution: drop reflections and use the cheapest shader.
+          lowQualitySet = true;
+          rendererRef.current?.setLowQuality();
+          slowFrames = 0;
+        } else if (fastFrames >= 180 && renderScale < 1) {
+          renderScale = Math.min(1, renderScale * 1.1);
+          fastFrames = 0;
+        }
+      }
 
       const cfg = configRef.current;
       const physics = physicsRef.current;
@@ -121,7 +147,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
         physics.step(dt * motionScale, cfg.flowSpeed, cfg.blobCount, cfg.waxScale);
       }
 
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5) * renderScale;
       const clientW = Math.max(1, canvas.clientWidth);
       const clientH = Math.max(1, canvas.clientHeight);
       viewportRatioRef.current = clientW / clientH;

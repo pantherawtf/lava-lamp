@@ -18,6 +18,12 @@ void main() {
 
 export const SCENE_FRAG_SHADER = `#version 300 es
 precision highp float;
+#ifndef WAX_STEPS
+#define WAX_STEPS 42
+#endif
+#ifndef SHELL_STEPS
+#define SHELL_STEPS 38
+#endif
 
 in vec2 vUv;
 out vec4 fragColor;
@@ -396,7 +402,7 @@ vec4 renderLampInstance(vec2 p, int shape, float scale, float timeOffset, vec3 b
     float tMax = 4.5;
     bool hit = false;
     vec3 hitPos = vec3(0.0);
-    for (int i = 0; i < 42; i++) {
+    for (int i = 0; i < WAX_STEPS; i++) {
       vec3 q = ro + rd * t;
       float d = mapWax(q, bounds, timeOffset, true);
       if (d < 0.0025) {
@@ -444,7 +450,7 @@ vec4 renderLampInstance(vec2 p, int shape, float scale, float timeOffset, vec3 b
   bool hitShell = false;
   vec3 pos = vec3(0.0);
 
-  for (int i = 0; i < 38; i++) {
+  for (int i = 0; i < SHELL_STEPS; i++) {
     pos = ro + rd * t;
     float d = sdVesselOuter(pos, shape);
     if (d < 0.0014) {
@@ -490,7 +496,7 @@ vec4 renderLampInstance(vec2 p, int shape, float scale, float timeOffset, vec3 b
   float glitterAccum = 0.0;
   float liquidPath = 0.0;
 
-  for (int i = 0; i < 42; i++) {
+  for (int i = 0; i < WAX_STEPS; i++) {
     vec3 q = pos + rdIn * tIn;
     float rWall = getVesselRadius(clamp(q.y, bounds.x, bounds.y), shape);
     if (length(q.xz) > rWall + 0.006 || q.y < bounds.x - 0.01 || q.y > bounds.y + 0.01) {
@@ -728,6 +734,7 @@ void main() {
   }
 
   // Floor Mirror Reflection (Image 7)
+#ifdef FEAT_REFLECTION
   if (uFloorReflection > 0.01 && uVesselShape != 4) {
     vec4 bounds = getVesselBounds(uVesselShape);
     float floorY = bounds.z * uScale + uOffset.y;
@@ -743,6 +750,9 @@ void main() {
     }
   }
 
+#endif
+
+#ifdef FEAT_ECHO
   // Secondary Echoed Lamps (Image 5 & experimental multi-lamp trios)
   if (uEchoCount >= 2 && uVesselShape != 4) {
     // Echo 1 (back-left ghost lamp, inspired by Image 5)
@@ -765,6 +775,8 @@ void main() {
       if (uTransparentBg == 1) finalAlpha = max(finalAlpha, echo2.a * uEchoOpacity * 0.88);
     }
   }
+
+#endif
 
   // Primary Hero Lamp
   vec4 hero = renderLampInstance(p - uOffset, uVesselShape, uScale, 0.0, bg);
@@ -917,20 +929,16 @@ void main() {
   if (uBloom > 0.005) {
     vec2 texel = 1.0 / max(uResolution, vec2(1.0));
     float resLod = max(log2(uResolution.y / 720.0), 0.0);
-    vec3 bloomAccum = vec3(0.0);
-    float weightSum = 0.0;
-
-    for (int i = 0; i < 5; i++) {
-      float lod = 2.0 + float(i) + resLod;
+    // Cheap: 1 trilinear tap at a low mip + 2 taps on each of 4 wider mips (9 reads total)
+    vec3 bloomAccum = textureLod(uSceneTex, uv, 2.0 + resLod).rgb * 1.0;
+    float weightSum = 1.0;
+    for (int i = 0; i < 4; i++) {
+      float lod = 3.0 + float(i) + resLod;
       vec2 o = texel * exp2(lod) * 0.5;
-      vec3 c = textureLod(uSceneTex, uv, lod).rgb;
-      c += textureLod(uSceneTex, uv + vec2( o.x,  o.y), lod).rgb;
-      c += textureLod(uSceneTex, uv + vec2(-o.x,  o.y), lod).rgb;
-      c += textureLod(uSceneTex, uv + vec2( o.x, -o.y), lod).rgb;
-      c += textureLod(uSceneTex, uv + vec2(-o.x, -o.y), lod).rgb;
-      c *= 0.2;
-      float w = 1.0 / (1.0 + float(i) * 0.55);
-      bloomAccum += c * w;
+      vec3 c = textureLod(uSceneTex, uv + o, lod).rgb
+             + textureLod(uSceneTex, uv - o, lod).rgb;
+      float w = 1.0 / (1.0 + float(i + 1) * 0.55);
+      bloomAccum += c * 0.5 * w;
       weightSum += w;
     }
     bloomAccum /= weightSum;
@@ -982,3 +990,25 @@ void main() {
   fragColor = vec4(clamp(col, 0.0, 1.0), uTransparentBg == 1 ? clamp(alpha, 0.0, 1.0) : 1.0);
 }
 `;
+
+export interface SceneShaderOptions {
+  echo: boolean;
+  reflection: boolean;
+  fast: boolean;
+}
+
+/**
+ * Builds the scene shader with only the features currently in use, so the GPU driver
+ * compiles (and runs) a much smaller program. `fast` lowers the raymarch step counts.
+ */
+export function buildSceneShader(opts: SceneShaderOptions): string {
+  const defs = [
+    opts.echo ? '#define FEAT_ECHO' : '',
+    opts.reflection ? '#define FEAT_REFLECTION' : '',
+    opts.fast ? '#define WAX_STEPS 28' : '',
+    opts.fast ? '#define SHELL_STEPS 26' : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  return SCENE_FRAG_SHADER.replace('#version 300 es\n', `#version 300 es\n${defs}\n`);
+}

@@ -6,7 +6,7 @@ import type {
   VesselShape,
 } from '../types/lava';
 import { MAX_BLOBS } from './physics';
-import { FULLSCREEN_VERT_SHADER, POST_FRAG_SHADER, SCENE_FRAG_SHADER } from './shaders';
+import { FULLSCREEN_VERT_SHADER, POST_FRAG_SHADER, buildSceneShader } from './shaders';
 
 const VESSEL_MAP: Record<VesselShape, number> = {
   astro: 0,
@@ -88,7 +88,11 @@ function linkProgram(
 export class LavaRenderer {
   private gl: WebGL2RenderingContext;
   private canvas: HTMLCanvasElement;
-  private sceneProgram: WebGLProgram;
+  private sceneProgram!: WebGLProgram;
+  private sceneKey = '';
+  private sceneCache = new Map<string, { program: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null> }>();
+  private fastMarch = false;
+  private lowQuality = false;
   private postProgram: WebGLProgram;
   private vao: WebGLVertexArrayObject | null;
 
@@ -117,15 +121,49 @@ export class LavaRenderer {
     }
 
     this.gl = gl;
-    this.sceneProgram = linkProgram(gl, FULLSCREEN_VERT_SHADER, SCENE_FRAG_SHADER);
+    // Fewer raymarch steps on non-Apple GPUs for the live preview; exports keep full quality.
+    let renderer = '';
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    if (dbg) renderer = String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '');
+    this.fastMarch = !preserveDrawingBuffer && !/apple/i.test(renderer);
     this.postProgram = linkProgram(gl, FULLSCREEN_VERT_SHADER, POST_FRAG_SHADER);
     this.vao = gl.createVertexArray();
 
     this.cacheUniforms();
   }
 
-  private cacheUniforms(): void {
+  /** Drops reflections and uses the cheapest march settings (called when the device can't keep up). */
+  setLowQuality(): void {
+    this.lowQuality = true;
+    this.fastMarch = true;
+  }
+
+  private ensureSceneProgram(config: LavaConfig): void {
+    const echo = config.echoCount >= 2;
+    const reflection = !this.lowQuality && config.floorReflection > 0.01;
+    const key = `${echo ? 'e' : ''}${reflection ? 'r' : ''}${this.fastMarch ? 'f' : ''}`;
+    if (key === this.sceneKey && this.sceneProgram) return;
+    let entry = this.sceneCache.get(key);
+    if (!entry) {
+      const program = linkProgram(
+        this.gl,
+        FULLSCREEN_VERT_SHADER,
+        buildSceneShader({ echo, reflection, fast: this.fastMarch })
+      );
+      entry = { program, uniforms: {} };
+      this.sceneCache.set(key, entry);
+      this.sceneProgram = program;
+      this.cacheSceneUniforms();
+      entry.uniforms = this.sceneUniforms;
+    }
+    this.sceneKey = key;
+    this.sceneProgram = entry.program;
+    this.sceneUniforms = entry.uniforms;
+  }
+
+  private cacheSceneUniforms(): void {
     const gl = this.gl;
+    this.sceneUniforms = {};
     const sceneNames = [
       'uResolution',
       'uTime',
@@ -160,7 +198,10 @@ export class LavaRenderer {
     for (const name of sceneNames) {
       this.sceneUniforms[name] = gl.getUniformLocation(this.sceneProgram, name);
     }
+  }
 
+  private cacheUniforms(): void {
+    const gl = this.gl;
     const postNames = [
       'uSceneTex',
       'uResolution',
@@ -230,6 +271,7 @@ export class LavaRenderer {
     // --- PASS 1: 3D Raymarched Lava Lamp Scene -> FBO ---
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
     gl.viewport(0, 0, w, h);
+    this.ensureSceneProgram(config);
     gl.useProgram(this.sceneProgram);
 
     const su = this.sceneUniforms;
@@ -273,8 +315,15 @@ export class LavaRenderer {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     // Build mip chain of the scene (used by the soft bloom in the post pass)
+    // Only when bloom is on, so the cost is zero otherwise.
     gl.bindTexture(gl.TEXTURE_2D, this.fboTex);
-    gl.generateMipmap(gl.TEXTURE_2D);
+    const useMips = config.bloom > 0.005;
+    if (useMips) gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(
+      gl.TEXTURE_2D,
+      gl.TEXTURE_MIN_FILTER,
+      useMips ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR
+    );
 
     // --- PASS 2: Experimental Distortions & Optical Finishing -> Screen ---
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -313,7 +362,8 @@ export class LavaRenderer {
     if (this.fboTex) gl.deleteTexture(this.fboTex);
     if (this.fbo) gl.deleteFramebuffer(this.fbo);
     if (this.vao) gl.deleteVertexArray(this.vao);
-    gl.deleteProgram(this.sceneProgram);
+    for (const entry of this.sceneCache.values()) gl.deleteProgram(entry.program);
+    this.sceneCache.clear();
     gl.deleteProgram(this.postProgram);
   }
 }
