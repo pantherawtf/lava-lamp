@@ -225,6 +225,7 @@ float vesselRadius(int shape, float y) {
   }
 }
 
+#ifndef LITE
 // Exact slope-corrected Euclidean SDF to outer lamp body with subtle top/bottom micro-chamfers
 float mapLampOuterDist(vec3 p) {
   if (uVesselShape == 4) {
@@ -338,6 +339,8 @@ vec3 calcWaxNormal(vec3 p) {
     e.xxx * mapWax(p + e.xxx)
   );
 }
+
+#endif
 
 // Studio environment reflection color (softbox strips + cool/warm studio sweep)
 vec3 sampleStudioEnv(vec3 refDir, float isDark) {
@@ -573,6 +576,7 @@ float evalShakeGlitter(vec3 p, float gMin, float gMax) {
   return sparkle * envelope;
 }
 
+#ifndef LITE
 // Shade borosilicate glass chamber & internal wax (wax tracing preserved verbatim)
 vec3 shadeGlassVessel(
   vec3 pOut,
@@ -869,6 +873,244 @@ vec4 traceSceneRay(
   return vec4(col, 1.0);
 }
 
+#endif
+
+#ifdef LITE
+// ===================== LITE MODE: no raymarching =====================
+// Silhouette, normals and wax come from closed-form math (surface of revolution + 2D metaballs).
+vec4 gLiteBlob[9];
+int gLiteN = 0;
+float gLiteK = 0.03;
+float gLiteGMin = 0.0;
+float gLiteGMax = 0.0;
+float gLitePoolR = 0.1;
+
+void liteSetupWax() {
+  gLiteGMin = vesselGlassYMin(uVesselShape);
+  gLiteGMax = vesselGlassYMax(uVesselShape);
+  float gSpan = gLiteGMax - gLiteGMin;
+  float w = uWidthRatio;
+  gLiteK = max(0.025, uViscosity * 0.56);
+  gLiteN = 0;
+  for (int i = 0; i < 9; i++) {
+    if (i >= uBlobCount) break;
+    vec4 b = uBlobs[i];
+    if (b.w <= 0.001) continue;
+    float yNorm = clamp((b.y + 0.46) / 0.92, 0.0, 1.0);
+    float by = gLiteGMin + 0.06 + yNorm * (gSpan - 0.12);
+    float br = b.w * (uVesselShape == 4 ? 1.55 : 1.18) * sqrt(w);
+    float wallR = (uVesselShape == 4) ? 0.45 * w : max(0.05, vesselRadius(uVesselShape, by) - 0.022);
+    br = min(br, wallR * 0.78);
+    float maxCenter = max(0.01, wallR - br * 0.72);
+    vec2 bxz = b.xz * (uVesselShape == 4 ? 1.45 : 0.95 * w);
+    float distXZ = length(bxz);
+    if (distXZ > maxCenter) bxz *= maxCenter / distXZ;
+    gLiteBlob[gLiteN] = vec4(bxz.x, by, br, 0.0);
+    gLiteN++;
+  }
+  if (uVesselShape != 4) {
+    gLitePoolR = vesselRadius(uVesselShape, gLiteGMin + 0.02) * 0.84;
+  }
+}
+
+// Signed distance (2D) to the wax silhouette seen from the front
+float liteWaxD(vec2 p) {
+  float k = gLiteK;
+  float d = 1e4;
+  for (int i = 0; i < 9; i++) {
+    if (i >= gLiteN) break;
+    vec4 b = gLiteBlob[i];
+    vec2 q = p - b.xy;
+    q.y *= 0.86;
+    d = smin(d, length(q) - b.z, k);
+  }
+  if (uVesselShape != 4) {
+    vec2 qp = p - vec2(sin(uTime * 0.55) * 0.02, gLiteGMin + 0.014);
+    qp.y *= 2.45;
+    d = smin(d, length(qp) - gLitePoolR, k * 0.85);
+  }
+  if (uTurbulence > 0.002) {
+    d += fastGyroid(vec3(p * 11.5, 0.0) + vec3(0.0, -uTime * 1.1, uTime * 0.45)) * uTurbulence * 0.026;
+  }
+  if (uVesselShape != 4) {
+    float innerWall = vesselRadius(uVesselShape, clamp(p.y, gLiteGMin, gLiteGMax)) - 0.016;
+    float dWall = abs(p.x) - innerWall;
+    float dCaps = max((gLiteGMin + 0.008) - p.y, p.y - (gLiteGMax - 0.022));
+    d = max(d, max(dWall, dCaps));
+  }
+  return d;
+}
+
+// Dome-like pseudo normal for the wax from the 2D distance field
+vec3 liteWaxNormal(vec2 p, float d0) {
+  const float e = 0.004;
+  vec2 g = vec2(liteWaxD(p + vec2(e, 0.0)) - d0, liteWaxD(p + vec2(0.0, e)) - d0);
+  vec2 gdir = g / max(length(g), 1e-5);
+  const float R = 0.12;
+  float rho = clamp(R + d0, 0.0, R);
+  return normalize(vec3(gdir * rho, sqrt(max(R * R - rho * rho, 1e-4))));
+}
+
+vec3 liteShadeGlass(
+  vec3 pOut, vec3 nOut, vec3 rdL, vec2 uv, vec2 pScreen, float isDark, float pxSize
+) {
+  float gMin = vesselGlassYMin(uVesselShape);
+  float gMax = vesselGlassYMax(uVesselShape);
+  float gSpan = gMax - gMin;
+
+  float ior = mix(1.04, 1.24, uGlassRefraction);
+  vec3 rdIn = refract(rdL, nOut, 1.0 / ior);
+  if (length(rdIn) < 0.01) rdIn = rdL;
+
+  // Where the refracted ray crosses the middle of the chamber
+  vec2 p2 = pOut.xy + rdIn.xy * (pOut.z / max(-rdIn.z, 0.35));
+  float d0 = liteWaxD(p2);
+  float waxCov = smoothstep(pxSize * 0.9, -pxSize * 0.9, d0);
+
+  vec2 refrUv = uv + nOut.xy * (0.045 * uGlassRefraction);
+  vec2 refrScreen = pScreen + nOut.xy * (0.065 * uGlassRefraction);
+  vec3 behindCol = (uTransparentBg == 1)
+    ? mix(uLiquidColor * 0.25, vec3(0.08), 0.3)
+    : renderStudioBackground(clamp(refrUv, 0.0, 1.0), refrScreen);
+
+  float heightT = clamp((pOut.y - gMin) / gSpan, 0.0, 1.0);
+  float ndotv = clamp(abs(dot(nOut, -rdL)), 0.0, 1.0);
+  float fresnel = pow(1.0 - ndotv, 3.4);
+
+  float pathDepth = mix(0.65, 1.65, 1.0 - ndotv);
+  float liqStrength = clamp(uLiquidDensity * pathDepth, 0.0, 1.45);
+  vec3 transmittance = exp(-max(vec3(0.04), (1.0 - uLiquidColor) * 2.45 + 0.22) * liqStrength * 1.15);
+  vec3 liquidBase = behindCol * transmittance + uLiquidColor * (1.0 - transmittance) * (0.58 + 0.28 * (1.0 - heightT));
+
+  float bulbHeat = pow(clamp(1.0 - heightT, 0.0, 1.0), 2.55) * uBottomGlow;
+  vec3 hotCoreCol = mix(uWaxHot, vec3(1.0, 0.95, 0.94), 0.42);
+  liquidBase += hotCoreCol * bulbHeat * (0.42 + 0.24 * ndotv);
+
+  vec3 interiorCol = liquidBase;
+
+  if (waxCov > 0.001) {
+    vec3 nWax = liteWaxNormal(p2, d0);
+    float wHeight = clamp((p2.y - gMin) / gSpan, 0.0, 1.0);
+    vec3 waxAlbedo = mix(uWaxHot, uWaxCool, smoothstep(0.06, 0.84, wHeight));
+    vec3 keyDir = normalize(vec3(0.55, 0.62, 0.56));
+    float diff = max(dot(nWax, keyDir), 0.0);
+    float wNdotV = clamp(abs(dot(nWax, -rdIn)), 0.0, 1.0);
+    float bottomUp = clamp(-nWax.y * 0.55 + 0.5, 0.0, 1.0);
+    float coreGlow = mix(0.32, 1.0, pow(wNdotV, 1.15)) * uSubsurface;
+    float baseIncandescence = pow(clamp(1.0 - wHeight, 0.0, 1.0), 2.4) * uBottomGlow;
+    vec3 waxLit = waxAlbedo * (0.34 + 0.62 * diff + coreGlow * 0.72)
+                + hotCoreCol * baseIncandescence * (0.48 + 0.55 * bottomUp);
+    float wSpec = pow(max(dot(nWax, normalize(keyDir - rdIn)), 0.0), 34.0);
+    waxLit += vec3(1.0, 0.97, 0.95) * wSpec * 0.22;
+    float frontLiquid = clamp(pOut.z * 2.0 * uLiquidDensity, 0.0, 0.82);
+    vec3 frontTrans = exp(-max(vec3(0.03), (1.0 - uLiquidColor) * 2.1 + 0.15) * frontLiquid);
+    vec3 waxCol = waxLit * frontTrans + uLiquidColor * (1.0 - frontTrans) * 0.35;
+    interiorCol = mix(interiorCol, waxCol, waxCov);
+  }
+
+  // Sparkles are sampled once (not along a ray) and only show in the clear liquid
+  vec3 pMid = vec3(p2, 0.0);
+  float particleAcc = (uParticles > 0.01) ? evalMicroParticles(pMid, rdIn, gMin, gMax) * 1.1 : 0.0;
+  float shakeAcc = (uShakeGlitter.x > 0.005) ? evalShakeGlitter(pMid, gMin, gMax) * 1.2 : 0.0;
+  float clear = 1.0 - waxCov;
+  interiorCol += mix(vec3(1.0), uWaxHot, 0.35) * clamp(particleAcc * clear, 0.0, 1.25);
+  if (shakeAcc > 0.001) {
+    vec3 shakeCol = mix(vec3(1.0, 0.97, 0.90), mix(uWaxHot, vec3(1.0), 0.55), 0.32);
+    interiorCol += shakeCol * clamp(shakeAcc * clear, 0.0, 2.1);
+  }
+
+  vec3 envRefl = sampleStudioEnv(reflect(rdL, nOut), isDark);
+  float glassSpec = (0.14 + 0.86 * fresnel) * (0.45 + 0.72 * uGlassRefraction);
+  vec3 col = interiorCol + envRefl * glassSpec * (isDark > 0.5 ? 0.58 : 0.44);
+
+  float glassEdge = pow(1.0 - ndotv, 5.2) * (0.35 + 0.45 * uGlassRefraction);
+  col += mix(uLiquidColor, vec3(1.0), 0.7) * glassEdge * 0.30;
+
+  float meniscus = smoothstep(0.955, 0.992, heightT) * smoothstep(1.0, 0.992, heightT);
+  col += vec3(0.28) * meniscus;
+
+  float collarShade = smoothstep(max(0.008, pxSize * 1.6), 0.0, abs(pOut.y - gMin)) * 0.32
+                    + smoothstep(max(0.007, pxSize * 1.4), 0.0, abs(pOut.y - gMax)) * 0.28;
+  col *= (1.0 - clamp(collarShade, 0.0, 0.42));
+  return col;
+}
+
+vec4 traceSceneRayLite(
+  vec2 pScreen, vec2 uv, vec3 ro, vec3 cu, vec3 cv, vec3 cw,
+  mat2 tiltM, float invScale, float boundR, float isDark
+) {
+  float alphaBg = (uTransparentBg == 1) ? 0.0 : 1.0;
+  vec3 dir = normalize(pScreen.x * cu + pScreen.y * cv + 1.85 * cw);
+  float sPlane = -ro.z / min(dir.z, -0.2);
+  vec2 pt = ro.xy + dir.xy * sPlane;
+  vec2 lp = tiltM * (pt - uOffset * 1.45) * invScale;
+  vec3 rdL = normalize(vec3(tiltM * dir.xy, dir.z));
+  float pxL = max(0.0005, sPlane * invScale / uResolution.y);
+
+  float yBottom = -0.90;
+  float yTop = (uVesselShape == 2) ? 0.90 : 0.88;
+
+  // Cheap rejection of background pixels
+  if (abs(lp.x) > boundR + 0.05 || lp.y < -0.95 || lp.y > 0.95) {
+    return vec4((uTransparentBg == 1) ? vec3(0.0) : renderStudioBackground(uv, pScreen), alphaBg);
+  }
+
+  if (uVesselShape == 4) {
+    liteSetupWax();
+    float d0 = liteWaxD(lp);
+    float cov = smoothstep(pxL * 0.9, -pxL * 0.9, d0);
+    vec3 bgCol = (uTransparentBg == 1) ? vec3(0.0) : renderStudioBackground(uv, pScreen);
+    if (cov < 0.002) return vec4(bgCol, alphaBg);
+    vec3 n = liteWaxNormal(lp, d0);
+    float hNorm = clamp((lp.y + 0.55) / 1.1, 0.0, 1.0);
+    vec3 waxCol = mix(uWaxHot, uWaxCool, smoothstep(0.05, 0.88, hNorm));
+    vec3 keyDir = normalize(vec3(0.55, 0.65, 0.52));
+    float diff = max(dot(n, keyDir), 0.0);
+    float ndotv = clamp(abs(dot(n, -rdL)), 0.0, 1.0);
+    float spec = pow(max(dot(n, normalize(keyDir - rdL)), 0.0), 42.0);
+    float sss = (0.35 + 0.65 * pow(ndotv, 1.1)) * uSubsurface;
+    vec3 lit = waxCol * (0.38 + 0.68 * diff + sss * 0.72) + vec3(1.0) * spec * 0.48;
+    lit += uWaxHot * pow(1.0 - hNorm, 2.2) * uBottomGlow * 0.55;
+    return (uTransparentBg == 1) ? vec4(lit, cov) : vec4(mix(bgCol, lit, cov), 1.0);
+  }
+
+  float yc = clamp(lp.y, yBottom, yTop);
+  float r = vesselRadius(uVesselShape, yc);
+  float hh = 0.004;
+  float drdy = (vesselRadius(uVesselShape, clamp(yc + hh, yBottom, yTop))
+              - vesselRadius(uVesselShape, clamp(yc - hh, yBottom, yTop))) / (2.0 * hh);
+  float dEdge = (r - abs(lp.x)) * inversesqrt(1.0 + drdy * drdy);
+  float cov = smoothstep(-0.75 * pxL, 0.75 * pxL, dEdge)
+            * clamp((lp.y - yBottom) / pxL + 0.5, 0.0, 1.0)
+            * clamp((yTop - lp.y) / pxL + 0.5, 0.0, 1.0);
+
+  vec3 bgCol = (uTransparentBg == 1) ? vec3(0.0) : renderStudioBackground(uv, pScreen);
+  if (cov < 0.002) return vec4(bgCol, alphaBg);
+
+  float xs = clamp(lp.x, -r, r);
+  float zz = sqrt(max(r * r - xs * xs, 1e-5));
+  vec3 pOut = vec3(xs, yc, zz);
+  vec3 nOut = normalize(vec3(xs, -r * drdy, zz));
+
+  float gMin = vesselGlassYMin(uVesselShape);
+  float gMax = vesselGlassYMax(uVesselShape);
+  float seamBlendW = max(0.0022, pxL * 1.15);
+  float glassMask = smoothstep(gMin - seamBlendW, gMin + seamBlendW, yc)
+                  * smoothstep(gMax + seamBlendW, gMax - seamBlendW, yc);
+
+  vec3 col;
+  if (glassMask <= 0.001) {
+    col = shadeMetal(pOut, nOut, rdL, isDark, pxL);
+  } else {
+    liteSetupWax();
+    vec3 glassCol = liteShadeGlass(pOut, nOut, rdL, uv, pScreen, isDark, pxL);
+    col = (glassMask >= 0.999) ? glassCol : mix(shadeMetal(pOut, nOut, rdL, isDark, pxL), glassCol, glassMask);
+  }
+
+  return (uTransparentBg == 1) ? vec4(col, cov) : vec4(mix(bgCol, col, cov), 1.0);
+}
+#endif
+
 void main() {
   vec2 uv = vUv;
   vec2 pScreen = (gl_FragCoord.xy - 0.5 * uResolution) / uResolution.y;
@@ -887,6 +1129,9 @@ void main() {
   float boundR = (uVesselShape == 4 ? 0.56 : 0.34) * uWidthRatio + 0.065;
   float pxFactor = 1.0 / (1.85 * uResolution.y * safeScale);
 
+#ifdef LITE
+  vec4 result = traceSceneRayLite(pScreen, uv, ro, cu, cv, cw, tiltM, invScale, boundR, isDark);
+#else
   // Primary center ray (covers ~98% of screen pixels in a single sample)
   bool needsEdgeAA = false;
   vec4 result = traceSceneRay(
@@ -937,6 +1182,8 @@ void main() {
       result.a = 1.0;
     }
   }
+
+#endif
 
   vec3 color = result.rgb;
   float alpha = result.a;

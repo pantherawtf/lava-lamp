@@ -77,6 +77,19 @@ function createProgram(gl: WebGL2RenderingContext, vsSrc: string, fsSrc: string)
   return program;
 }
 
+/**
+ * Lite mode replaces raymarching with closed-form math (much lighter on mobile / integrated GPUs).
+ * Force it with ?modo=leve, or force the full renderer with ?modo=completo.
+ * Without a parameter it is enabled automatically on Android.
+ */
+export function shouldUseLiteRenderer(): boolean {
+  if (typeof window === 'undefined') return false;
+  const mode = new URLSearchParams(window.location.search).get('modo');
+  if (mode === 'leve') return true;
+  if (mode === 'completo') return false;
+  return /Android/i.test(navigator.userAgent || '');
+}
+
 export class LavaRenderer {
   private gl: WebGL2RenderingContext;
   private program: WebGLProgram;
@@ -87,7 +100,7 @@ export class LavaRenderer {
   private rgbCool: [number, number, number] = [1, 0.1, 0.25];
   private rgbLiquid: [number, number, number] = [0.1, 0.15, 1];
 
-  constructor(canvas: HTMLCanvasElement, preserveDrawingBuffer = false) {
+  constructor(canvas: HTMLCanvasElement, preserveDrawingBuffer = false, lite = false) {
     const gl = canvas.getContext('webgl2', {
       alpha: true,
       antialias: false,
@@ -103,7 +116,10 @@ export class LavaRenderer {
     }
 
     this.gl = gl;
-    this.program = createProgram(gl, FULLSCREEN_VERT_SHADER, SCENE_FRAG_SHADER);
+    const fragSrc = lite
+      ? SCENE_FRAG_SHADER.replace('#version 300 es\n', '#version 300 es\n#define LITE\n')
+      : SCENE_FRAG_SHADER;
+    this.program = createProgram(gl, FULLSCREEN_VERT_SHADER, fragSrc);
     this.vao = gl.createVertexArray();
 
     const uniformNames = [

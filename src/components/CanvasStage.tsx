@@ -6,7 +6,7 @@ import {
   SlidersHorizontal,
   Waves,
 } from 'lucide-react';
-import { LavaRenderer, type TransientMotion } from '../engine/LavaRenderer';
+import { LavaRenderer, shouldUseLiteRenderer, type TransientMotion } from '../engine/LavaRenderer';
 import { LavaPhysics, MAX_BLOBS } from '../engine/physics';
 import type { LavaConfig } from '../types/lava';
 import type { MobileSheetState } from './MobileBottomSheet';
@@ -148,9 +148,10 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    const useLite = shouldUseLiteRenderer();
     let renderer: LavaRenderer | null = null;
     try {
-      renderer = new LavaRenderer(canvas, false);
+      renderer = new LavaRenderer(canvas, false, useLite);
       rendererRef.current = renderer;
       setWebglError(null);
     } catch (err) {
@@ -166,7 +167,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
     const handleContextRestored = () => {
       try {
         renderer?.dispose();
-        renderer = new LavaRenderer(canvas, false);
+        renderer = new LavaRenderer(canvas, false, useLite);
         rendererRef.current = renderer;
         setWebglError(null);
       } catch (err) {
